@@ -20,8 +20,12 @@ load_dotenv()
 
 from youtube_transcript_fetcher import get_youtube_transcript, extract_video_id, purge_expired_translation_cache
 from audio_config import ASR_BACKEND, TTS_BACKEND
-from system_prompts import subject_matter_expert_prompt, map_reduce_custom_prompts
-from condenser_service import condense_content
+from system_prompts import subject_matter_expert_prompt
+from condenser_service import (
+    build_intro_prompt,
+    condense_content,
+    get_condensation_profile_id,
+)
 from condensation_cache import (
     compute_cache_key,
     load_checkpoint,
@@ -35,6 +39,7 @@ from langchain.callbacks import get_openai_callback
 from process_runner import run_in_subprocess
 import model_worker
 from llm_models import get_model
+from llm_adapters import create_condensation_adapter
 from utils import remove_thinking_tokens, create_backup_file, parse_backup_file, list_backup_files
 from email_sender import send_email_with_audio, send_email_with_attachments
 from telegram_sender import send_telegram_with_audio, send_telegram_with_attachments
@@ -146,10 +151,19 @@ def load_content():
     # Checkpoint setup — compute key before any I/O so every stage can
     # save progress and a retry resumes from where it stopped.
     # ------------------------------------------------------------------
-    checkpoint_key = compute_cache_key(url, mode, current_model_key, fetch_mode, script_style)
+    condensation_adapter = create_condensation_adapter(current_model, current_model_key)
+    condensation_profile_id = get_condensation_profile_id(
+        condensation_adapter, script_style=script_style
+    )
+    checkpoint_model_key = f"{current_model_key}|{condensation_profile_id}"
+    checkpoint_key = compute_cache_key(
+        url, mode, checkpoint_model_key, fetch_mode, script_style
+    )
     checkpoint = load_checkpoint(checkpoint_key)
     if checkpoint is None:
-        checkpoint_key, checkpoint = create_checkpoint(url, mode, current_model_key, fetch_mode, script_style)
+        checkpoint_key, checkpoint = create_checkpoint(
+            url, mode, checkpoint_model_key, fetch_mode, script_style
+        )
     else:
         print(
             f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
@@ -254,7 +268,7 @@ def load_content():
             else:
                 print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensing content...")
                 condensed_content = condense_content(
-                    raw_content, current_model, checkpoint_key, checkpoint,
+                    raw_content, condensation_adapter, checkpoint_key, checkpoint,
                     script_style=script_style
                 )
                 print(
@@ -274,15 +288,25 @@ def load_content():
                 else:
                     map_results: dict = checkpoint.get("map_results", {})
                     valid_keys = [k for k in map_results if map_results[k]]
+                    map_samples = []
                     if valid_keys:
                         sorted_keys = sorted(valid_keys, key=int)
                         sample_keys = sorted(random.sample(sorted_keys, min(3, len(sorted_keys))), key=int)
-                        map_samples = "\n\n".join(map_results[k] for k in sample_keys)
+                        map_samples = [map_results[k] for k in sample_keys]
                         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Generating intro ({len(sample_keys)} MAP samples)...")
-                        response = current_model.invoke(
-                            map_reduce_custom_prompts["intro_prompt"].format(map_samples=map_samples)
+                    else:
+                        print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] Generating intro from final script excerpts...")
+
+                    intro_prompt = build_intro_prompt(
+                        condensation_adapter,
+                        map_samples,
+                        condensed_content,
+                        script_style=script_style,
+                    )
+                    if intro_prompt:
+                        intro_text, tags_found = remove_thinking_tokens(
+                            condensation_adapter.generate(intro_prompt)
                         )
-                        intro_text, tags_found = remove_thinking_tokens(response.content)
                         if not tags_found:
                             print(f"[WARNING] Intro tags missing — continuing without intro")
                             intro_text = ""
@@ -290,7 +314,7 @@ def load_content():
                             checkpoint["intro_text"] = intro_text
                             save_checkpoint(checkpoint_key, checkpoint)
                     else:
-                        print(f"[WARNING] No MAP results in checkpoint — skipping intro")
+                        print(f"[WARNING] Intro prompt did not fit the configured context — continuing without intro")
             except Exception as e:
                 print(f"[WARNING] Intro generation failed: {e} — continuing without intro")
                 intro_text = ""
