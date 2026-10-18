@@ -75,16 +75,15 @@ def generate_audio(text):
 def create_audio_file(audio, sample_rate: int = sr, video_id: str = "", video_title: str = "") -> str:
     output_dir = 'kokoro_outputs'
     os.makedirs(output_dir, exist_ok=True)
-    if video_id:
-        if video_title:
-            safe_title = _sanitize_filename(video_title)
-            base = f"{video_id}_{safe_title}" if safe_title else video_id
-        else:
-            base = video_id
-        output_file = os.path.join(output_dir, f'{base}.wav')
+    safe_title = _sanitize_filename(video_title)
+    if safe_title:
+        base = safe_title
+    elif video_id:
+        base = video_id
     else:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_file = os.path.join(output_dir, f'kokoro_500word_{timestamp}.wav')
+        base = f'kokoro_500word_{timestamp}'
+    output_file = os.path.join(output_dir, f'{base}.wav')
     if audio is None or (hasattr(audio, 'size') and audio.size == 0):
         print(f"[ERROR]   [{datetime.now().strftime('%H:%M:%S')}] [KOKORO_TTS] Attempted to save empty audio array — not writing file: {output_file}")
         return output_file
