@@ -23,6 +23,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import requests
 from youtube_transcript_api import YouTubeTranscriptApi
 from process_runner import run_in_subprocess
 import model_worker
@@ -214,6 +215,21 @@ def extract_video_id(video_link: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _fetch_transcript_text(video_id: str, language: str) -> str:
+    """Fetch captions directly without changing the process proxy environment."""
+    with requests.Session() as session:
+        session.trust_env = False
+        session.verify = (
+            os.getenv("REQUESTS_CA_BUNDLE")
+            or os.getenv("CURL_CA_BUNDLE")
+            or True
+        )
+        fetched = YouTubeTranscriptApi(http_client=session).fetch(
+            video_id, languages=[language]
+        )
+        return " ".join(entry.text for entry in fetched)
+
+
 def get_youtube_transcript(video_link: str) -> str:
     """Fetch an English transcript for a YouTube video using the Transcript API only.
 
@@ -238,8 +254,7 @@ def get_youtube_transcript(video_link: str) -> str:
 
     # Step 1 — try English directly.
     try:
-        fetched = YouTubeTranscriptApi().fetch(video_id, languages=['en'])
-        text = " ".join(e.text for e in fetched)
+        text = _fetch_transcript_text(video_id, "en")
         print(f"[INFO]    [{_ts()}] English transcript fetched: {len(text):,} chars")
         return text
     except Exception:
@@ -259,8 +274,7 @@ def get_youtube_transcript(video_link: str) -> str:
         print(f"[WARNING] Translation cache lookup failed for {video_id}: {e}, proceeding without cache.")
 
     try:
-        fetched = YouTubeTranscriptApi().fetch(video_id, languages=['hi'])
-        hindi_text = " ".join(e.text for e in fetched)
+        hindi_text = _fetch_transcript_text(video_id, "hi")
         print(f"[INFO]    [{_ts()}] Hindi transcript fetched: {len(hindi_text):,} chars, translating...")
         english_text = run_in_subprocess(model_worker.translate_worker, video_id, hindi_text)
         print(f"[INFO]    [{_ts()}] Translation complete: {len(english_text):,} chars")

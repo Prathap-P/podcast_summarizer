@@ -91,15 +91,27 @@ def index():
     return render_template('index.html')
 
 def _fetch_youtube_title(video_id: str) -> str:
-    """Fetch YouTube video title via oEmbed. Returns empty string on failure."""
+    """Fetch the title directly, without altering Copilot's proxy environment."""
     try:
-        import urllib.request
-        import json as _json
-        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-        with urllib.request.urlopen(oembed_url, timeout=5) as resp:
-            data = _json.loads(resp.read().decode())
-            return data.get("title", "")
-    except Exception:
+        with requests.Session() as session:
+            session.trust_env = False
+            session.verify = (
+                os.getenv("REQUESTS_CA_BUNDLE")
+                or os.getenv("CURL_CA_BUNDLE")
+                or True
+            )
+            response = session.get(
+                "https://www.youtube.com/oembed",
+                params={
+                    "url": f"https://www.youtube.com/watch?v={video_id}",
+                    "format": "json",
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            return response.json().get("title", "")
+    except Exception as exc:
+        print(f"[WARNING] YouTube title lookup failed for {video_id}: {type(exc).__name__}: {exc}")
         return ""
 
 @app.route('/load_content', methods=['POST'])
@@ -208,6 +220,13 @@ def load_content():
             # -----------------------------------------------------------
             # Step 1: Fetch raw content (resume if already cached)
             # -----------------------------------------------------------
+            _yt_title = checkpoint.get("video_title", "")
+            if not _yt_title and _video_id:
+                _yt_title = _fetch_youtube_title(_video_id)
+                if _yt_title:
+                    checkpoint["video_title"] = _yt_title
+                    save_checkpoint(checkpoint_key, checkpoint)
+
             if checkpoint.get("raw_content"):
                 raw_content = checkpoint["raw_content"]
                 print(
@@ -344,13 +363,6 @@ def load_content():
                 print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] TTS voice selected: {tts_voice}")
 
             try:
-
-                _yt_title = checkpoint.get("video_title", "") if checkpoint else ""
-                if not _yt_title and _video_id:
-                    _yt_title = _fetch_youtube_title(_video_id)
-                    if _yt_title and checkpoint:
-                        checkpoint["video_title"] = _yt_title
-                        save_checkpoint(checkpoint_key, checkpoint)
                 audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "", tts_voice, _video_id or "", _yt_title)
                 audio_file = os.path.basename(audio_file_path)
                 # Save audio path BEFORE building the response to avoid losing it on crash
