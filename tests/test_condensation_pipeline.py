@@ -219,7 +219,7 @@ class CondensationPipelineTests(unittest.TestCase):
         interrupted = FailFirstReduce()
 
         with patch("condenser_service.save_checkpoint"):
-            with self.assertRaisesRegex(ValueError, "Model crashed during REDUCE"):
+            with self.assertRaisesRegex(ValueError, "Text generation failed during REDUCE"):
                 condenser_service.condense_content(source, interrupted, "fake-key", checkpoint)
             mapped_count = len(checkpoint["map_results"])
             resumed = FakeAdapter()

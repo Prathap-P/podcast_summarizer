@@ -1029,6 +1029,55 @@
             background: #ffcdd2;
             color: #c62828;
         }
+        /* ---- Right column: Live Speech + Quick Email ---- */
+        .right-column {
+            flex: 0 0 700px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: stretch;
+        }
+        .right-column .email-panel {
+            width: 100%;
+            position: static;
+            order: 2;
+        }
+        .live-speech {
+            order: 1;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 20px;
+        }
+        .live-speech h3 { color: #667eea; font-size: 18px; margin-bottom: 4px; }
+        .ls-subtitle { font-size: 13px; color: #555; margin-bottom: 12px; }
+        .ls-banner { padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.45; margin-bottom: 14px; }
+        .ls-banner-info { background: #e3f2fd; color: #1565c0; }
+        .ls-banner-ok { background: #e8f5e9; color: #2e7d32; }
+        .ls-banner-warn { background: #fff3e0; color: #8a4b00; border-left: 4px solid #ff9800; }
+        .ls-columns { display: flex; gap: 16px; align-items: stretch; }
+        .ls-input { flex: 1 1 55%; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        .ls-output { flex: 1 1 45%; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+        .ls-input textarea {
+            width: 100%; min-height: 300px; flex: 1; padding: 12px; border: 2px solid #e0e0e0;
+            border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical;
+        }
+        .ls-input textarea:focus { outline: none; border-color: #667eea; }
+        .ls-step { font-size: 12px; font-weight: 700; color: #667eea; text-transform: uppercase; letter-spacing: 0.4px; }
+        .ls-meta { display: flex; gap: 14px; font-size: 12px; color: #777; }
+        .ls-meta a { color: #667eea; text-decoration: none; }
+        .ls-meta a:hover { text-decoration: underline; }
+        .ls-meta span { margin-right: auto; }
+        .ls-buttons { display: flex; gap: 8px; }
+        .ls-play { flex: 1; background: #3949ab; color: white; font-size: 15px; padding: 12px; }
+        .ls-stop { background: #607d8b; color: white; padding: 12px 16px; }
+        .ls-play:disabled, .ls-stop:disabled { opacity: 0.45; cursor: not-allowed; }
+        .ls-status { min-height: 44px; padding: 10px 12px; border-radius: 8px; background: #f5f5f5; color: #444; font-size: 13px; line-height: 1.4; }
+        .ls-status.ls-busy { background: #e3f2fd; color: #1565c0; }
+        .ls-status.ls-ok { background: #e8f5e9; color: #2e7d32; }
+        .ls-status.ls-error { background: #ffebee; color: #c62828; }
+        .ls-divider { height: 1px; background: #e0e0e0; margin: 6px 0; }
+        .ls-hint { font-size: 12px; color: #777; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -1309,6 +1358,9 @@
         </div>
     </div>
     
+    <!-- Right column: Live Speech workspace on top, Quick Email below -->
+    <div class="right-column">
+
     <!-- Email Sender Panel -->
     <div class="email-panel">
         <h3>📧 Quick Email</h3>
@@ -1354,34 +1406,60 @@
         </div>
     </div>
     
-    <!-- Text to Audio Tool -->
-    <div class="email-panel">
-        <h3>🎙️ Text to Audio</h3>
-        <div class="email-form">
-            <textarea 
-                id="audioText" 
-                placeholder="Paste or type text to convert to audio..."
-                style="min-height: 150px;"
-            ></textarea>
-            
-            <div id="audioStatus" style="margin: 10px 0; padding: 10px; border-radius: 6px; display: none;"></div>
-            
-            <div id="audioPlayer" style="margin: 10px 0; display: none;">
-                <audio controls style="width: 100%; border-radius: 6px;">
-                    <source id="audioSource" type="audio/wav">
-                </audio>
+    <!-- Live Speech workspace -->
+    <div class="live-speech">
+        <h3>🎙️ Live Speech</h3>
+        <p class="ls-subtitle">Paste any text, press <strong>Play live</strong>, and listen while it is being generated.</p>
+
+        <div id="liveEngineBanner" class="ls-banner ls-banner-info">Checking your voice engine…</div>
+
+        <div class="ls-columns">
+            <div class="ls-input">
+                <label class="ls-step" for="audioText">Step 1 · Paste your text</label>
+                <textarea
+                    id="audioText"
+                    placeholder="Paste or type your text here. It can be as long as you like."
+                    oninput="updateLiveCounter()"
+                ></textarea>
+                <div class="ls-meta">
+                    <span id="liveCounter">0 characters</span>
+                    <a href="#" onclick="fillExampleText(); return false;">Try an example</a>
+                    <a href="#" onclick="clearLiveText(); return false;">Clear</a>
+                </div>
             </div>
-            
-            <button 
-                class="btn btn-primary" 
-                onclick="generateAudio()" 
-                id="generateAudioBtn"
-                style="width: 100%; background: #9c27b0;"
-            >
-                🎙️ Generate Audio
-            </button>
+
+            <div class="ls-output">
+                <div class="ls-step">Step 2 · Listen</div>
+                <div class="ls-buttons">
+                    <button type="button" id="livePlayBtn" class="btn ls-play" onclick="startLiveSpeech()" disabled>▶ Play live</button>
+                    <button type="button" id="liveStopBtn" class="btn ls-stop" onclick="stopLiveSpeech()" disabled>⏹ Stop</button>
+                </div>
+                <div id="liveStatus" class="ls-status">Waiting for your text.</div>
+
+                <div class="ls-divider"></div>
+
+                <div class="ls-step">Or save it as a file</div>
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    onclick="generateAudio()"
+                    id="generateAudioBtn"
+                    style="width: 100%; background: #9c27b0;"
+                >
+                    💾 Save as audio file
+                </button>
+                <p class="ls-hint">Takes longer: you wait until the whole file is ready, then a player appears. Works with every voice engine.</p>
+                <div id="audioStatus" style="margin: 8px 0; padding: 10px; border-radius: 6px; display: none; font-size: 13px;"></div>
+                <div id="audioPlayer" style="margin: 8px 0; display: none;">
+                    <audio controls style="width: 100%; border-radius: 6px;">
+                        <source id="audioSource" type="audio/wav">
+                    </audio>
+                </div>
+            </div>
         </div>
     </div>
+
+    </div><!-- /.right-column -->
     
     <!-- Retry All Failed Button -->
     <div class="retry-section" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
@@ -1704,6 +1782,8 @@
                     // Success - move to finished list
                     const cacheTag = data.from_cache ? ` [CACHED:${data.video_id || 'hit'}]` : '';
                     console.log(`[AUTO-PROCESSOR] ✅ Success${cacheTag}: ${url}`);
+                    const timingText = formatTimingHtml(data).replace(/<[^>]+>/g, '');
+                    if (timingText) console.log(`[TIME] ${timingText}`);
 
                     window._lastLoadResponse = data;
                     const itemTitle = data.video_id ? `YouTube: ${data.video_id}` : url;
@@ -2489,6 +2569,179 @@
             }
         }
         
+        // ---- Live Speech (Phonon streaming) ----
+        const LIVE_EXAMPLE_TEXT = 'Welcome to live speech. This text is being turned into audio while you listen, one sentence at a time. You do not have to wait for a whole file to be ready. Paste your own article or notes here, press Play live, and the voice will start speaking within a moment.';
+        let liveEngineReady = false;
+        let liveStream = null;
+
+        function formatAudioLength(seconds) {
+            const total = Math.floor(seconds);
+            return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+        }
+
+        function setLiveStatus(message, kind = '') {
+            const el = document.getElementById('liveStatus');
+            el.textContent = message;
+            el.className = 'ls-status' + (kind ? ` ls-${kind}` : '');
+        }
+
+        function updateLiveButtons() {
+            const hasText = document.getElementById('audioText').value.trim().length > 0;
+            const busy = liveStream !== null;
+            const play = document.getElementById('livePlayBtn');
+            play.disabled = !liveEngineReady || !hasText || busy;
+            play.title = liveEngineReady ? '' : 'Live playback needs the Phonon voice engine. See the notice above.';
+            document.getElementById('liveStopBtn').disabled = !busy;
+        }
+
+        function updateLiveCounter() {
+            const text = document.getElementById('audioText').value;
+            const n = text.trim().length;
+            document.getElementById('liveCounter').textContent = `${n.toLocaleString()} character${n === 1 ? '' : 's'}`;
+            if (!liveStream) {
+                if (!liveEngineReady) {
+                    setLiveStatus('Live playback is turned off for this voice engine. You can still save an audio file.');
+                } else {
+                    setLiveStatus(n ? 'Ready. Press Play live.' : 'Waiting for your text.');
+                }
+            }
+            updateLiveButtons();
+        }
+
+        function fillExampleText() {
+            document.getElementById('audioText').value = LIVE_EXAMPLE_TEXT;
+            updateLiveCounter();
+        }
+
+        function clearLiveText() {
+            stopLiveSpeech();
+            document.getElementById('audioText').value = '';
+            updateLiveCounter();
+        }
+
+        async function loadLiveEngineStatus() {
+            const banner = document.getElementById('liveEngineBanner');
+            try {
+                const response = await fetch('/tts_status');
+                const info = await response.json();
+                liveEngineReady = !!info.live_speech;
+                if (liveEngineReady) {
+                    banner.className = 'ls-banner ls-banner-ok';
+                    banner.textContent = '✅ Voice engine: Phonon. Live playback is on. The first Play after starting the app takes a few extra seconds while the voice loads.';
+                } else {
+                    banner.className = 'ls-banner ls-banner-warn';
+                    banner.innerHTML = `⚠️ Live playback is off. Your app is using the <strong>${info.backend}</strong> voice engine, which can only make a finished audio file. `
+                        + 'To turn live playback on: open the <code>.env</code> file, set <code>TTS_BACKEND=phonon</code>, then restart the app. '
+                        + 'Until then, use <strong>Save as audio file</strong>.';
+                }
+            } catch (error) {
+                liveEngineReady = false;
+                banner.className = 'ls-banner ls-banner-warn';
+                banner.textContent = '⚠️ Could not check the voice engine. Is the app still running?';
+            }
+            updateLiveCounter();
+        }
+
+        function stopLiveSpeech() {
+            if (!liveStream) return;
+            const current = liveStream;
+            liveStream = null;
+            current.controller.abort();
+            current.sources.forEach((source) => {
+                try { source.stop(); } catch (e) { /* already ended */ }
+            });
+            current.ctx.close().catch(() => {});
+            setLiveStatus('Stopped.');
+            updateLiveButtons();
+        }
+
+        async function startLiveSpeech() {
+            const text = document.getElementById('audioText').value.trim();
+            if (!text || !liveEngineReady || liveStream) return;
+
+            const controller = new AbortController();
+            // Created inside the click so the browser allows sound to play.
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const stream = { controller, ctx, sources: new Set() };
+            liveStream = stream;
+            updateLiveButtons();
+            setLiveStatus('Starting… loading the voice. This takes a few seconds the first time.', 'busy');
+            const requestedAt = performance.now();
+
+            try {
+                await ctx.resume();
+                const response = await fetch('/stream_audio', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ text }),
+                    signal: controller.signal,
+                });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.error || `The server answered with an error (${response.status}).`);
+                }
+
+                const sampleRate = parseInt(response.headers.get('X-Sample-Rate'), 10) || 24000;
+                const reader = response.body.getReader();
+                let carry = new Uint8Array(0);
+                let nextTime = 0;
+                let generatedSeconds = 0;
+                let lastSource = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const merged = new Uint8Array(carry.length + value.length);
+                    merged.set(carry, 0);
+                    merged.set(value, carry.length);
+                    const usable = merged.length - (merged.length % 2);
+                    carry = merged.slice(usable);
+                    if (!usable) continue;
+
+                    const pcm = new Int16Array(merged.buffer, 0, usable / 2);
+                    const floats = new Float32Array(pcm.length);
+                    for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
+
+                    const buffer = ctx.createBuffer(1, floats.length, sampleRate);
+                    buffer.copyToChannel(floats, 0);
+                    const source = ctx.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(ctx.destination);
+                    stream.sources.add(source);
+                    source.onended = () => stream.sources.delete(source);
+
+                    nextTime = Math.max(nextTime, ctx.currentTime + 0.05);
+                    source.start(nextTime);
+                    nextTime += buffer.duration;
+                    generatedSeconds += buffer.duration;
+                    lastSource = source;
+
+                    const startedIn = Math.round(performance.now() - requestedAt);
+                    setLiveStatus(`▶ Playing live (first sound after ${startedIn} ms). Audio made so far: ${formatAudioLength(generatedSeconds)}.`, 'busy');
+                }
+
+                if (lastSource && liveStream === stream) {
+                    setLiveStatus(`All audio is generated (${formatAudioLength(generatedSeconds)}). Finishing playback…`, 'busy');
+                    await new Promise((resolve) => { lastSource.onended = resolve; });
+                }
+                if (liveStream === stream) {
+                    setLiveStatus(`✅ Finished. Total audio: ${formatAudioLength(generatedSeconds)}.`, 'ok');
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    setLiveStatus(`❌ ${error.message}`, 'error');
+                }
+            } finally {
+                if (liveStream === stream) {
+                    ctx.close().catch(() => {});
+                    liveStream = null;
+                    updateLiveButtons();
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadLiveEngineStatus);
+
         async function generateAudio() {
             const text = document.getElementById('audioText').value.trim();
             const btn = document.getElementById('generateAudioBtn');
@@ -2529,7 +2782,7 @@
                 showAudioStatus(`❌ Error: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🎙️ Generate Audio';
+                btn.textContent = '💾 Save as audio file';
             }
             
             function showAudioStatus(message, type) {
@@ -2591,6 +2844,46 @@
             return copyBtn;
         }
 
+        function formatElapsed(seconds) {
+            const value = Math.max(0, Number(seconds));
+            const total = Math.round(value);
+            if (total < 60) {
+                return value < 10 ? `${value.toFixed(1)}s` : `${total}s`;
+            }
+            const hours = Math.floor(total / 3600);
+            const minutes = Math.floor((total % 3600) / 60);
+            const secs = total % 60;
+            if (hours) return `${hours}h ${minutes}m ${secs}s`;
+            return `${minutes}m ${secs}s`;
+        }
+
+        function formatTimingHtml(timings) {
+            const labels = [
+                ['fetch_time', 'Fetch'],
+                ['text_time', 'Text'],
+                ['intro_time', 'Intro'],
+                ['llm_time', 'LLM'],
+                ['audio_time', 'Audio'],
+                ['telegram_time', 'Telegram'],
+            ];
+            const parts = [];
+            let total = 0;
+            labels.forEach(([key, label]) => {
+                const value = timings[key];
+                if (value == null || value === '') return;
+                const seconds = Number(value);
+                if (Number.isNaN(seconds)) return;
+                parts.push(`${label}: <strong>${formatElapsed(seconds)}</strong>`);
+                total += seconds;
+            });
+            if (!parts.length) return '';
+            let text = `⏱️ <strong>Timing:</strong> ${parts.join(' | ')}`;
+            if (parts.length > 1) {
+                text += ` | Total: <strong>${formatElapsed(total)}</strong>`;
+            }
+            return text;
+        }
+
         function addMessage(content, isUser = false, audioFile = null, tokenUsage = null, timings = null) {
             const chatContainer = document.getElementById('chatContainer');
             const messageDiv = document.createElement('div');
@@ -2618,14 +2911,13 @@
             
             // Add timing info if available
             if (timings && !isUser) {
-                const timingDiv = document.createElement('div');
-                timingDiv.style.cssText = 'margin-top: 8px; padding: 8px 12px; background: #fff3e0; border-left: 3px solid #ff9800; font-size: 13px; color: #555; border-radius: 4px;';
-                let timingText = `⏱️ <strong>Timing:</strong> LLM: <strong>${timings.llm_time}s</strong>`;
-                if (timings.audio_time) {
-                    timingText += ` | Audio: <strong>${timings.audio_time}s</strong> | Total: <strong>${(timings.llm_time + timings.audio_time).toFixed(2)}s</strong>`;
+                const timingText = formatTimingHtml(timings);
+                if (timingText) {
+                    const timingDiv = document.createElement('div');
+                    timingDiv.style.cssText = 'margin-top: 8px; padding: 8px 12px; background: #fff3e0; border-left: 3px solid #ff9800; font-size: 13px; color: #555; border-radius: 4px;';
+                    timingDiv.innerHTML = timingText;
+                    messageDiv.appendChild(timingDiv);
                 }
-                timingDiv.innerHTML = timingText;
-                messageDiv.appendChild(timingDiv);
             }
             
             // Add token usage info if available
@@ -2701,11 +2993,13 @@
 
                     const contentType = 'Transcript';
                     
-                    // Create timing info if available
-                    const timings = data.audio_time ? {
-                        llm_time: 0,  // No LLM time in load_content
-                        audio_time: data.audio_time
-                    } : null;
+                    const timings = {
+                        fetch_time: data.fetch_time,
+                        text_time: data.text_time,
+                        intro_time: data.intro_time,
+                        audio_time: data.audio_time,
+                        telegram_time: data.telegram_time,
+                    };
                     
                     addMessage(`${contentType} Content (Condensed):\n\n${data.content}`, false, data.audio_file, null, timings);
                     

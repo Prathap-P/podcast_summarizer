@@ -1,11 +1,14 @@
 import os
 
-ASR_BACKEND = os.getenv("ASR_BACKEND", "qwen_omni")
-TTS_BACKEND = os.getenv("TTS_BACKEND", "qwen_omni")
+ASR_BACKEND = os.getenv("ASR_BACKEND", "whisper")
+TTS_BACKEND = os.getenv("TTS_BACKEND", "kokoro")
 QWEN_OMNI_MODEL_ID = os.getenv("QWEN_OMNI_MODEL_ID", "Qwen/Qwen2.5-Omni-3B")
 QWEN_OMNI_SPEAKER = os.getenv("QWEN_OMNI_SPEAKER", "Chelsie")
 KOKORO_VOICE = os.getenv("KOKORO_VOICE", "af_sarah")
 KOKORO_LANG_CODE = os.getenv("KOKORO_LANG_CODE", "a")
+PHONON_MODEL_ID = os.getenv("PHONON_MODEL_ID", "")
+PHONON_LANG = os.getenv("PHONON_LANG", "en")
+PHONON_VOICE = os.getenv("PHONON_VOICE", "")
 
 def _parse_kokoro_speed() -> float:
     raw = os.getenv("KOKORO_SPEED", "1.0")

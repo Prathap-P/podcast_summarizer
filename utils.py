@@ -5,6 +5,21 @@ from pathlib import Path
 from typing import List, Optional
 
 
+def format_elapsed(seconds: float) -> str:
+    """Format a duration as seconds, or minutes plus leftover seconds."""
+    value = max(0.0, float(seconds))
+    total = int(round(value))
+    if total < 60:
+        if value < 10:
+            return f"{value:.1f}s"
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    return f"{minutes}m {secs}s"
+
+
 def remove_thinking_tokens(text: str) -> tuple[str, bool]:
     """
     Extract final script from LLM response by finding content within <final_script> tags.

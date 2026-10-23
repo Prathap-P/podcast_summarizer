@@ -5,9 +5,12 @@ never loads model weights. The OS reclaims all memory when the subprocess exits.
 """
 
 import os
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
+
+from utils import format_elapsed
 
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
@@ -19,16 +22,24 @@ def asr_worker(url: str, video_id: str) -> str:
     Returns the transcript string (or "Error: ..." on failure).
     """
     load_dotenv()
-    backend = os.getenv("ASR_BACKEND", "qwen_omni")
-    print(f"[INFO]    [{_ts()}] [ASR subprocess] Starting, backend={backend}, video_id={video_id}")
-    if backend == "qwen_omni":
-        from qwen_omni_backend import get_transcript_via_qwen
-        result = get_transcript_via_qwen(url, video_id)
-    else:
-        from whisper_transcriber import get_transcript_via_whisper
-        result = get_transcript_via_whisper(url, video_id)
-    print(f"[INFO]    [{_ts()}] [ASR subprocess] Complete, len={len(result)} chars")
-    return result
+    started = time.perf_counter()
+    try:
+        backend = os.getenv("ASR_BACKEND", "whisper")
+        print(f"[INFO]    [{_ts()}] [ASR subprocess] Starting, backend={backend}, video_id={video_id}")
+        if backend == "qwen_omni":
+            from qwen_omni_backend import get_transcript_via_qwen
+            result = get_transcript_via_qwen(url, video_id)
+        else:
+            from whisper_transcriber import get_transcript_via_whisper
+            result = get_transcript_via_whisper(url, video_id)
+        print(f"[INFO]    [{_ts()}] [ASR subprocess] Complete, len={len(result)} chars")
+        return result
+    finally:
+        elapsed = time.perf_counter() - started
+        print(
+            f"[TIME]    [{_ts()}] [ASR subprocess] "
+            f"Transcription took: {format_elapsed(elapsed)}"
+        )
 
 def tts_worker(text: str, output_path: str, voice: str = "", video_id: str = "", video_title: str = "") -> str:
     """Generate TTS audio and save to file in an isolated subprocess.
@@ -46,8 +57,24 @@ def tts_worker(text: str, output_path: str, voice: str = "", video_id: str = "",
         video_title: YouTube video title used for output filename.
     """
     load_dotenv()
-    backend = os.getenv("TTS_BACKEND", "qwen_omni")
+    started = time.perf_counter()
+    backend = os.getenv("TTS_BACKEND", "kokoro")
     print(f"[INFO]    [{_ts()}] [TTS subprocess] Starting, backend={backend}, chars={len(text)}, voice={voice!r}, video_id={video_id!r}")
+    try:
+        return _generate_tts(text, backend, voice, video_id, video_title)
+    finally:
+        elapsed = time.perf_counter() - started
+        print(
+            f"[TIME]    [{_ts()}] [TTS subprocess] "
+            f"Audio generation took: {format_elapsed(elapsed)}"
+        )
+
+
+def _generate_tts(text: str, backend: str, voice: str, video_id: str, video_title: str) -> str:
+    """Dispatch TTS and write the wav. Split out so timing wraps the whole call."""
+    if backend == "kokoro":
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        print(f"[INFO]    [{_ts()}] [TTS subprocess] Kokoro Hugging Face access disabled; using local cache only")
 
     from kokoro_tts import create_audio_file
     if backend == "qwen_omni":
@@ -67,6 +94,12 @@ def tts_worker(text: str, output_path: str, voice: str = "", video_id: str = "",
         from vibevoice_tts import generate_audio as generate_audio_vibevoice
         audio, sample_rate = generate_audio_vibevoice(text, voice=voice if voice else "")
         final_path = create_audio_file(audio, sample_rate=sample_rate, video_id=video_id, video_title=video_title)
+
+    elif backend == "phonon":
+        from phonon_tts import generate_audio_phonon
+        audio, sample_rate = generate_audio_phonon(text)
+        final_path = create_audio_file(audio, sample_rate=sample_rate, video_id=video_id, video_title=video_title)
+
     else:
         if backend != "kokoro":
             print(f"[WARNING] [{_ts()}] [TTS subprocess] Unknown TTS_BACKEND={backend!r}, falling back to kokoro")
@@ -78,11 +111,19 @@ def tts_worker(text: str, output_path: str, voice: str = "", video_id: str = "",
 
 def translate_worker(video_id: str, raw_hindi_text: str) -> str:
     """Translate Hindi text to English in an isolated subprocess."""
-    print(
-        f"[INFO]    [{_ts()}] [TRANSLATE subprocess] Starting, "
-        f"video_id={video_id}, words={len(raw_hindi_text.split())}"
-    )
-    from youtube_transcript_fetcher import _translate_hindi_to_english
-    result = _translate_hindi_to_english(raw_hindi_text)
-    print(f"[INFO]    [{_ts()}] [TRANSLATE subprocess] Complete, len={len(result)} chars")
-    return result
+    started = time.perf_counter()
+    try:
+        print(
+            f"[INFO]    [{_ts()}] [TRANSLATE subprocess] Starting, "
+            f"video_id={video_id}, words={len(raw_hindi_text.split())}"
+        )
+        from youtube_transcript_fetcher import _translate_hindi_to_english
+        result = _translate_hindi_to_english(raw_hindi_text)
+        print(f"[INFO]    [{_ts()}] [TRANSLATE subprocess] Complete, len={len(result)} chars")
+        return result
+    finally:
+        elapsed = time.perf_counter() - started
+        print(
+            f"[TIME]    [{_ts()}] [TRANSLATE subprocess] "
+            f"Translation took: {format_elapsed(elapsed)}"
+        )

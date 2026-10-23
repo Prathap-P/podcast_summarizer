@@ -15,12 +15,13 @@ LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
 # Model definitions
 # ---------------------------------------------------------------------------
 
-groq_llm = ChatGroq(
-    model=os.getenv("GROQ_MODEL_ID", "openai/gpt-oss-20b"),
-    api_key=os.getenv("GROQ_API_KEY"),
-    temperature=0.3,
-    max_completion_tokens=65000,
-)
+def _create_groq_llm():
+    return ChatGroq(
+        model=os.getenv("GROQ_MODEL_ID", "openai/gpt-oss-20b"),
+        api_key=os.getenv("GROQ_API_KEY"),
+        temperature=0.3,
+        max_completion_tokens=65000,
+    )
 
 gemma_local_llm = ChatOpenAI(
     base_url=LM_STUDIO_BASE_URL,
@@ -36,10 +37,8 @@ nemotron_local_llm = ChatOpenAI(
     model=os.getenv("NEMOTRON_MODEL_ID", "nvidia/nemotron-3-nano"),
     top_p= 0.70,
     max_completion_tokens= 10000,
-    model_kwargs= {
-        "frequency_penalty": 1.3, # Heavily discourages "The speaker says..." loops
-        "presence_penalty": 0.3,  # Encourages introducing new topics/facts
-    },
+    frequency_penalty=1.3,
+    presence_penalty=0.3,
     timeout= 3600
 )
 
@@ -50,10 +49,8 @@ nemotron_stream_local_llm = ChatOpenAI(
     model=os.getenv("NEMOTRON_STREAM_MODEL_ID", "nvidia/nemotron-3-nano"),
     top_p= 0.85,
     max_completion_tokens= 15000,
-    model_kwargs= {
-        "frequency_penalty": 1, # Heavily discourages "The speaker says..." loops
-        "presence_penalty": 0.5,  # Encourages introducing new topics/facts
-    },
+    frequency_penalty=1,
+    presence_penalty=0.5,
     extra_body={
         "min_p": 0.05,
         "repeat_penalty": 1.1
@@ -70,10 +67,8 @@ nexveridian_qwen_stream_local_llm = ChatOpenAI(
     model=os.getenv("NEXVERIDIAN_QWEN_MODEL_ID", "nexveridian/qwen3.5-35b-a3b"),
     top_p=0.85,
     max_completion_tokens=20000,
-    model_kwargs={
-        "frequency_penalty": 0.8,
-        "presence_penalty": 0.6,
-    },
+    frequency_penalty=0.8,
+    presence_penalty=0.6,
     extra_body={
         "min_p": 0.05,
         "repeat_penalty": 1.15
@@ -90,10 +85,8 @@ mlx_community_qwen_stream_local_llm = ChatOpenAI(
     model=os.getenv("MLX_QWEN_MODEL_ID", "mlx-community/Local-3.5-35B-A3B-4bit"),
     top_p=0.9,
     max_completion_tokens=15000,
-    model_kwargs={
-        "frequency_penalty": 0.3,
-        "presence_penalty": 0.2,
-    },
+    frequency_penalty=0.3,
+    presence_penalty=0.2,
     extra_body={
         "min_p": 0,
         "repeat_penalty": 1.15
@@ -110,10 +103,8 @@ google_gemma_4_26b_a4b = ChatOpenAI(
     model=os.getenv("GEMMA_4_MODEL_ID", "google/gemma-4-26b-a4b"),
     top_p=0.9,
     max_completion_tokens=15000,
-    model_kwargs={
-        "frequency_penalty": 0.3,
-        "presence_penalty": 0.2,
-    },
+    frequency_penalty=0.3,
+    presence_penalty=0.2,
     extra_body={
         "min_p": 0,
         "repeat_penalty": 1.15
@@ -147,10 +138,8 @@ mistral_local_llm = ChatOpenAI(
     model=os.getenv("MISTRAL_MODEL_ID", "mlx-community/Mistral-7B-Instruct-v0.3-4bit"),
     top_p=0.85,
     max_completion_tokens=15000,
-    model_kwargs={
-        "frequency_penalty": 1,
-        "presence_penalty": 0.5,
-    },
+    frequency_penalty=1,
+    presence_penalty=0.5,
     extra_body={
         "min_p": 0.05,
         "repeat_penalty": 1.1
@@ -162,7 +151,6 @@ mistral_local_llm = ChatOpenAI(
 
 
 models_collection = {
-    "groq_llm": groq_llm,
     "gemma_local_llm": gemma_local_llm,
     "nemotron_local_llm": nemotron_local_llm,
     "nemotron_stream_local_llm": nemotron_stream_local_llm,
@@ -175,6 +163,8 @@ models_collection = {
 }
 
 def get_model(model_name):
+    if model_name == "groq_llm":
+        return _create_groq_llm()
     if model_name in models_collection:
         return models_collection[model_name]
     else:

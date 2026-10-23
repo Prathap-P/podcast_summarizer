@@ -1,6 +1,9 @@
+import io
+import os
 import subprocess
 import unittest
 from types import SimpleNamespace
+from contextlib import redirect_stdout
 from unittest.mock import Mock, patch
 
 from llm_adapters import (
@@ -112,6 +115,43 @@ class LLMAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(LLMAdapterError, "empty output"):
                 adapter.generate("prompt")
 
+    def test_copilot_debug_logs_exact_prompt_and_command_only_when_enabled(self):
+        adapter = CopilotCLIAdapter.from_environment({})
+        output = io.StringIO()
+        with patch.dict("os.environ", {"COPILOT_DEBUG": "true"}):
+            with patch("llm_adapters.subprocess.run") as run:
+                run.return_value = SimpleNamespace(
+                    returncode=0,
+                    stdout="<final_script>answer</final_script>",
+                    stderr="",
+                )
+                with redirect_stdout(output):
+                    adapter.generate("exact private prompt")
+
+        logs = output.getvalue()
+        self.assertIn("exact stdin prompt", logs)
+        self.assertIn("exact private prompt", logs)
+        self.assertIn("argv=", logs)
+        self.assertNotIn("exact private prompt", run.call_args.args[0])
+
+    def test_empty_output_logs_redacted_stderr_diagnostic(self):
+        adapter = CopilotCLIAdapter.from_environment({})
+        output = io.StringIO()
+        with patch("llm_adapters.subprocess.run") as run:
+            run.return_value = SimpleNamespace(
+                returncode=0,
+                stdout="",
+                stderr="Authentication failed: token=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+            )
+            with redirect_stdout(output):
+                with self.assertRaisesRegex(LLMAdapterError, "Copilot authentication or access"):
+                    adapter.generate("prompt")
+
+        logs = output.getvalue()
+        self.assertIn("Authentication failed", logs)
+        self.assertIn("[REDACTED]", logs)
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz0123456789", logs)
+
     def test_copilot_output_over_budget_is_rejected(self):
         adapter = CopilotCLIAdapter.from_environment(
             {"COPILOT_OUTPUT_BUDGET_TOKENS": "1"}
@@ -133,6 +173,82 @@ class LLMAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "COPILOT_TIMEOUT_SECONDS"):
             CopilotCLIAdapter.from_environment({"COPILOT_TIMEOUT_SECONDS": "nan"})
 
+    def test_catalog_timeout_is_not_classified_from_generic_login_advice(self):
+        adapter = CopilotCLIAdapter.from_environment({})
+        with patch("llm_adapters.subprocess.run") as run:
+            run.return_value = SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "Error: Model catalog request timed out after 30000ms\n"
+                    "Check your authentication status or re-authenticate."
+                ),
+            )
+            with self.assertRaisesRegex(LLMAdapterError, "catalog connectivity timeout"):
+                adapter.generate("prompt")
+
+    def test_proxy_disabled_only_for_copilot_subprocess(self):
+        adapter = CopilotCLIAdapter.from_environment({"COPILOT_USE_PROXY": "false"})
+        proxy_names = (
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+            "http_proxy", "https_proxy", "all_proxy",
+        )
+        environment = {name: "http://proxy.example:8080" for name in proxy_names}
+        environment.update({
+            "COPILOT_GITHUB_TOKEN": "test-token",
+            "NODE_EXTRA_CA_CERTS": "/example/ca.pem",
+            "NO_PROXY": "localhost",
+        })
+        with patch.dict(os.environ, environment):
+            with patch("llm_adapters.subprocess.run") as run:
+                run.return_value = SimpleNamespace(returncode=0, stdout="answer", stderr="")
+                adapter.generate("prompt")
+            child_environment = run.call_args.kwargs["env"]
+            for name in proxy_names:
+                self.assertNotIn(name, child_environment)
+                self.assertEqual(os.environ[name], environment[name])
+            for name in ("COPILOT_GITHUB_TOKEN", "NODE_EXTRA_CA_CERTS", "NO_PROXY"):
+                self.assertEqual(child_environment[name], environment[name])
+
+    def test_proxy_inherited_by_default(self):
+        adapter = CopilotCLIAdapter.from_environment({})
+        with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.example:8080"}):
+            with patch("llm_adapters.subprocess.run") as run:
+                run.return_value = SimpleNamespace(returncode=0, stdout="answer", stderr="")
+                adapter.generate("prompt")
+        self.assertEqual(run.call_args.kwargs["env"]["HTTPS_PROXY"], "http://proxy.example:8080")
+
+    def test_environment_diagnostics_show_source_not_secrets(self):
+        adapter = CopilotCLIAdapter.from_environment({})
+        output = io.StringIO()
+        with patch.dict("os.environ", {
+            "COPILOT_GITHUB_TOKEN": "private-credential",
+            "HTTPS_PROXY": "https://private-proxy.example:443",
+            "COPILOT_DEBUG": "false",
+        }):
+            with patch("llm_adapters.shutil.which", return_value="/chosen/copilot"):
+                with patch("llm_adapters.subprocess.run") as run:
+                    run.return_value = SimpleNamespace(returncode=0, stdout="answer", stderr="")
+                    with redirect_stdout(output):
+                        adapter.generate("private prompt")
+        logs = output.getvalue()
+        self.assertIn("/chosen/copilot", logs)
+        self.assertIn("auth_source=COPILOT_GITHUB_TOKEN", logs)
+        self.assertIn("HTTPS_PROXY", logs)
+        self.assertNotIn("private-credential", logs)
+        self.assertNotIn("private-proxy.example", logs)
+        self.assertNotIn("private prompt", logs)
+        self.assertEqual(run.call_args.args[0][0], "/chosen/copilot")
+
+    def test_unexpected_subprocess_error_stops_heartbeat(self):
+        adapter = CopilotCLIAdapter.from_environment({})
+        with patch("llm_adapters.threading.Event") as event:
+            with patch("llm_adapters.threading.Thread") as thread:
+                with patch("llm_adapters.subprocess.run", side_effect=RuntimeError("unexpected")):
+                    with self.assertRaisesRegex(RuntimeError, "unexpected"):
+                        adapter.generate("prompt")
+        event.return_value.set.assert_called_once()
+        thread.return_value.join.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

@@ -268,7 +268,7 @@ def _generate_script(
             raise TypeError("adapter.generate(prompt) must return str")
     except Exception as exc:
         record_failure()
-        raise ValueError(f"Model crashed during {label}: {exc}") from exc
+        raise ValueError(f"Text generation failed during {label}: {exc}") from exc
 
     cleaned, success = remove_thinking_tokens(response)
     if not success or not cleaned.strip():

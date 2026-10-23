@@ -5,11 +5,8 @@
 
 import os
 import re
-import torch
 import warnings
-from kokoro import KPipeline
 import soundfile as sf
-from IPython.display import Audio
 from datetime import datetime
 import numpy as np
 from audio_config import KOKORO_VOICE, KOKORO_LANG_CODE, KOKORO_SPEED
@@ -44,6 +41,7 @@ def _sanitize_filename(s: str) -> str:
 def generate_audio(text):
     global pipeline
     if pipeline is None:
+        from kokoro import KPipeline
         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] [KOKORO_TTS] Loading KPipeline (lang_code={KOKORO_LANG_CODE}, device={device})...")
         pipeline = KPipeline(lang_code=KOKORO_LANG_CODE, device=device)
         print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] [KOKORO_TTS] KPipeline loaded")
@@ -98,6 +96,5 @@ def generate_and_create_audio_file(text):
     print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] [KOKORO_TTS] Audio file saved to: {output_file}")
 
 # %%
-
 
 

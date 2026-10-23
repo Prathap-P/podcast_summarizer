@@ -7,7 +7,6 @@ import os
 import shutil
 from pathlib import Path
 
-from langchain.chains.conversation.base import ConversationChain
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -33,14 +32,19 @@ from condensation_cache import (
     save_checkpoint,
     get_progress_summary,
 )
-from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
-from langchain.callbacks import get_openai_callback
+from langchain_community.callbacks.manager import get_openai_callback
 from process_runner import run_in_subprocess
 import model_worker
 from llm_models import get_model
 from llm_adapters import create_condensation_adapter
-from utils import remove_thinking_tokens, create_backup_file, parse_backup_file, list_backup_files
+from utils import (
+    create_backup_file,
+    format_elapsed,
+    list_backup_files,
+    parse_backup_file,
+    remove_thinking_tokens,
+)
 from email_sender import send_email_with_audio, send_email_with_attachments
 from telegram_sender import send_telegram_with_audio, send_telegram_with_attachments
 
@@ -49,7 +53,6 @@ print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] ASR backend: {ASR_BACK
 app = Flask(__name__)
 
 # Global conversation state (in production, use session-based storage)
-window_memory_100 = ConversationBufferWindowMemory(k=100)
 conversation_chain = None
 current_mode = None
 session_history = InMemoryChatMessageHistory()
@@ -114,6 +117,23 @@ def _fetch_youtube_title(video_id: str) -> str:
         print(f"[WARNING] YouTube title lookup failed for {video_id}: {type(exc).__name__}: {exc}")
         return ""
 
+
+def _log_timings(label: str, **stages: float | None) -> None:
+    """Log elapsed seconds for the slow stages of a web request."""
+    parts: list[str] = []
+    total = 0.0
+    for name, elapsed in stages.items():
+        if elapsed is None:
+            parts.append(f"{name}=skipped")
+            continue
+        parts.append(f"{name}={format_elapsed(elapsed)}")
+        total += elapsed
+    print(
+        f"[TIME] {label}: {' '.join(parts)} "
+        f"total={format_elapsed(total)}"
+    )
+
+
 @app.route('/load_content', methods=['POST'])
 def load_content():
     """Load content, condense it using condenser_service, and prepare for Q&A"""
@@ -123,7 +143,13 @@ def load_content():
     url = data.get('url')
 
     mode = data.get('mode', 'youtube')
-    auto_send_telegram = data.get('auto_send_telegram', False)  # Only true for auto-processor
+    auto_send_requested = bool(data.get('auto_send_telegram', False))
+    auto_send_enabled = os.getenv("AUTO_SEND_TELEGRAM", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    auto_send_telegram = auto_send_requested and auto_send_enabled
+    if auto_send_requested and not auto_send_enabled:
+        print("[INFO] Automatic Telegram delivery is disabled by AUTO_SEND_TELEGRAM")
     category = data.get('category', 'tech')  # 'tech', 'social', or 'science'
     fetch_mode = data.get('fetch_mode', 'transcript')  # 'transcript' or 'audio'
 
@@ -184,6 +210,12 @@ def load_content():
         )
 
     audio_time = None  # declared early so except blocks can reference it
+    text_time = None
+    fetch_time = None
+    intro_time = None
+    telegram_time = None
+    intro_start = None
+    telegram_start = None
     try:
         tts_input = ''  # declared early; set in both cache-hit and non-cache branches
         # Initialize conversation chain for the selected mode
@@ -246,7 +278,10 @@ def load_content():
                         f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
                         f"Audio queue: transcribing via {ASR_BACKEND} for video: {video_id}"
                     )
+                    fetch_start = time.time()
                     raw_content = run_in_subprocess(model_worker.asr_worker, url, video_id)
+                    fetch_time = time.time() - fetch_start
+                    print(f"[TIME] Audio transcription took: {format_elapsed(fetch_time)}")
                     if raw_content.startswith("Error:"):
                         print(f"[ERROR] ASR transcription failed: {raw_content}")
                         return jsonify({'error': raw_content, 'success': False}), 400
@@ -258,7 +293,10 @@ def load_content():
                     # Transcript queue: try transcript API (manual transcripts only),
                     # fall back to Whisper automatically inside get_youtube_transcript().
                     print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Fetching YouTube transcript from: {url}")
+                    fetch_start = time.time()
                     raw_content = get_youtube_transcript(url)
+                    fetch_time = time.time() - fetch_start
+                    print(f"[TIME] Transcript fetch took: {format_elapsed(fetch_time)}")
                     if (
                         raw_content.startswith("No transcript available")
                         or raw_content.startswith("Error fetching")
@@ -286,10 +324,15 @@ def load_content():
                 )
             else:
                 print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensing content...")
-                condensed_content = condense_content(
-                    raw_content, condensation_adapter, checkpoint_key, checkpoint,
-                    script_style=script_style
-                )
+                text_start = time.time()
+                try:
+                    condensed_content = condense_content(
+                        raw_content, condensation_adapter, checkpoint_key, checkpoint,
+                        script_style=script_style
+                    )
+                finally:
+                    text_time = time.time() - text_start
+                    print(f"[TIME] Text generation took: {format_elapsed(text_time)}")
                 print(
                     f"[SUCCESS] Condensed: {len(raw_content)} -> {len(condensed_content)} chars"
                 )
@@ -300,6 +343,7 @@ def load_content():
             # Step 2b: Generate spoken intro from MAP summaries
             # -----------------------------------------------------------
             intro_text = ""
+            intro_start = None
             try:
                 if checkpoint.get("intro_text"):
                     intro_text = checkpoint["intro_text"]
@@ -323,9 +367,12 @@ def load_content():
                         script_style=script_style,
                     )
                     if intro_prompt:
+                        intro_start = time.time()
                         intro_text, tags_found = remove_thinking_tokens(
                             condensation_adapter.generate(intro_prompt)
                         )
+                        intro_time = time.time() - intro_start
+                        print(f"[TIME] Intro generation took: {format_elapsed(intro_time)}")
                         if not tags_found:
                             print(f"[WARNING] Intro tags missing — continuing without intro")
                             intro_text = ""
@@ -335,6 +382,9 @@ def load_content():
                     else:
                         print(f"[WARNING] Intro prompt did not fit the configured context — continuing without intro")
             except Exception as e:
+                if intro_start is not None:
+                    intro_time = time.time() - intro_start
+                    print(f"[TIME] Intro generation took: {format_elapsed(intro_time)}")
                 print(f"[WARNING] Intro generation failed: {e} — continuing without intro")
                 intro_text = ""
 
@@ -370,7 +420,7 @@ def load_content():
                 save_checkpoint(checkpoint_key, checkpoint)
                 audio_time = time.time() - audio_start_time
                 print(f"[SUCCESS] Audio generated: {audio_file}")
-                print(f"[TIME] Audio generation took: {audio_time:.2f}s")
+                print(f"[TIME] Audio generation took: {format_elapsed(audio_time)}")
             except Exception as e:
                 error_msg = f"Audio generation failed: {e}"
                 print(f"[ERROR] {error_msg}")
@@ -425,6 +475,7 @@ def load_content():
                 message = f"📝 Condensed {content_type}\n\n{condensed_content}"
                 
                 print(f"[TELEGRAM] Sending to channel: {channel_id}, discussion group: {chat_id}")
+                telegram_start = time.time()
                 telegram_success = send_telegram_with_audio(
                     chat_id=chat_id,
                     message=message,
@@ -434,6 +485,8 @@ def load_content():
                     channel_id=channel_id if channel_id else None
                 )
                 
+                telegram_time = time.time() - telegram_start
+                print(f"[TIME] Telegram send took: {format_elapsed(telegram_time)}")
                 if not telegram_success:
                     error_msg = "Failed to send content to Telegram"
                     print(f"[ERROR] {error_msg}")
@@ -448,6 +501,9 @@ def load_content():
                 
                 print(f"[SUCCESS] Content sent to Telegram successfully")
             except Exception as e:
+                if telegram_start is not None:
+                    telegram_time = time.time() - telegram_start
+                    print(f"[TIME] Telegram send took: {format_elapsed(telegram_time)}")
                 error_msg = f"Telegram sending failed: {e}"
                 print(f"[ERROR] {error_msg}")
                 # Create backup file
@@ -464,6 +520,17 @@ def load_content():
         session_history.add_user_message(f"Here is the condensed video transcript content (Original: {raw_word_count} words, Condensed: {condensed_word_count} words):\n\n{condensed_content}")
         session_history.add_ai_message(f"I have received and processed the condensed content. I'm ready to answer your questions about it.")
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Condensed content added to memory. Ready for Q&A.")
+        if any(v is not None for v in (
+            fetch_time, text_time, intro_time, audio_time, telegram_time,
+        )):
+            _log_timings(
+                "load_content",
+                fetch=fetch_time,
+                text=text_time,
+                intro=intro_time,
+                audio=audio_time,
+                telegram=telegram_time,
+            )
 
         # Return success only if everything succeeded
         return jsonify({
@@ -472,7 +539,11 @@ def load_content():
             'word_count': condensed_word_count,
             'original_word_count': raw_word_count,
             'audio_file': audio_file,
+            'fetch_time': round(fetch_time, 2) if fetch_time else None,
+            'text_time': round(text_time, 2) if text_time else None,
+            'intro_time': round(intro_time, 2) if intro_time else None,
             'audio_time': round(audio_time, 2) if audio_time else None,
+            'telegram_time': round(telegram_time, 2) if telegram_time else None,
             'from_cache': _cache_hit,
             'video_id': _video_id,
             'tts_script': tts_input,
@@ -485,7 +556,7 @@ def load_content():
         # ValueError is raised when thinking tokens aren't removed properly.
         # The checkpoint has already been saved with all progress so far;
         # the next retry will resume from the last successful step.
-        print(f"[ERROR] Thinking token validation failed: {e}")
+        print(f"[ERROR] Content processing failed: {e}")
         return jsonify({
             'error': str(e),
             'success': False,
@@ -928,7 +999,7 @@ def chat():
         
         print(f"[SUCCESS] LLM response generated. Length: {len(response_text)} characters")
         print(f"[TOKENS] Prompt: {token_usage['prompt_tokens']}, Completion: {token_usage['completion_tokens']}, Total: {token_usage['total_tokens']}")
-        print(f"[TIME] LLM generation took: {llm_time:.2f}s")
+        print(f"[TIME] LLM generation took: {format_elapsed(llm_time)}")
         
         # Get token usage if available
         token_usage = None
@@ -955,7 +1026,7 @@ def chat():
                 
                 audio_time = time.time() - audio_start_time
                 print(f"[SUCCESS] Audio generated: {audio_file}")
-                print(f"[TIME] Audio generation took: {audio_time:.2f}s")
+                print(f"[TIME] Audio generation took: {format_elapsed(audio_time)}")
             except Exception as e:
                 print(f"[ERROR] Audio generation failed: {e}")
 
@@ -1032,7 +1103,11 @@ def stream_chat():
                 }
 
             llm_time = time.time() - llm_start_time
-            print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Streaming complete. Time: {llm_time:.2f}s, Chunks: {total_chunk_size} chars")
+            print(
+                f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] "
+                f"Streaming complete. Time: {format_elapsed(llm_time)}, "
+                f"Chunks: {total_chunk_size} chars"
+            )
 
             # Remove thinking tokens from complete response
             complete_response_text, thinking_tokens_removed = remove_thinking_tokens(complete_response_text)
@@ -1046,7 +1121,7 @@ def stream_chat():
 
             # print(f"[SUCCESS] LLM streaming response completed. Length: {total_chunk_size} characters")
             # print(f"[TOKENS] Prompt: {token_usage['prompt_tokens']}, Completion: {token_usage['completion_tokens']}, Total: {token_usage['total_tokens']}")
-            # print(f"[TIME] LLM generation took: {llm_time:.2f}s")
+            print(f"[TIME] LLM generation took: {format_elapsed(llm_time)}")
 
             # Send streaming-done event if audio generation is requested
             if generate_audio_flag:
@@ -1064,7 +1139,7 @@ def stream_chat():
 
                     audio_time = time.time() - audio_start_time
                     print(f"[SUCCESS] Audio generated: {audio_file}")
-                    print(f"[TIME] Audio generation took: {audio_time:.2f}s")
+                    print(f"[TIME] Audio generation took: {format_elapsed(audio_time)}")
                 except Exception as e:
                     print(f"[ERROR] Audio generation failed: {e}")
 
@@ -1137,14 +1212,25 @@ def text_to_audio():
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] text_to_audio: Converting {len(text)} chars to audio")
         print(f"[DEBUG] Text preview: {text[:100]}...")
 
-        audio_file_path = run_in_subprocess(model_worker.tts_worker, text, "")
+        audio_start = time.time()
+        try:
+            audio_file_path = run_in_subprocess(model_worker.tts_worker, text, "")
+        except Exception:
+            print(
+                f"[TIME] Audio generation took: "
+                f"{format_elapsed(time.time() - audio_start)}"
+            )
+            raise
+        audio_time = time.time() - audio_start
         audio_filename = os.path.basename(audio_file_path)
         
         print(f"[SUCCESS] Audio file created: {audio_filename}")
+        print(f"[TIME] Audio generation took: {format_elapsed(audio_time)}")
         
         return jsonify({
             'success': True,
             'audio_file': audio_filename,
+            'audio_time': round(audio_time, 2),
             'message': f'Audio generated successfully ({len(text)} chars)'
         })
         
@@ -1155,6 +1241,70 @@ def text_to_audio():
             'success': False,
             'error': error_msg
         }), 500
+
+LIVE_SPEECH_NEEDS_PHONON = (
+    "Live playback needs the Phonon voice engine. Your app is using "
+    f"'{TTS_BACKEND}'. To turn it on, set TTS_BACKEND=phonon in the .env "
+    "file and restart the app."
+)
+
+
+@app.route('/tts_status', methods=['GET'])
+def tts_status():
+    """Tell the page which voice engine is active and whether live playback works."""
+    live = TTS_BACKEND == 'phonon'
+    return jsonify({
+        'backend': TTS_BACKEND,
+        'live_speech': live,
+        'message': '' if live else LIVE_SPEECH_NEEDS_PHONON,
+    })
+
+
+@app.route('/stream_audio', methods=['POST'])
+def stream_audio():
+    """Stream Phonon speech as raw int16 mono PCM while it is generated."""
+    if TTS_BACKEND != 'phonon':
+        return jsonify({'success': False, 'error': LIVE_SPEECH_NEEDS_PHONON}), 400
+
+    data = request.get_json(silent=True) or {}
+    text = str(data.get('text', '')).strip()
+    if not text:
+        return jsonify({'success': False, 'error': 'Please paste some text first.'}), 400
+
+    import phonon_stream
+
+    try:
+        sample_rate = phonon_stream.get_sample_rate()
+    except Exception as e:
+        error_msg = f"Could not start the Phonon voice: {e}"
+        print(f"[ERROR] {error_msg}")
+        return jsonify({'success': False, 'error': error_msg}), 500
+
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] stream_audio: Streaming {len(text)} chars")
+
+    def generate():
+        stream_start = time.time()
+        first_chunk_at = None
+        try:
+            for pcm in phonon_stream.stream_pcm16(text):
+                if first_chunk_at is None:
+                    first_chunk_at = time.time() - stream_start
+                    print(f"[TIME] Stream first audio after: {format_elapsed(first_chunk_at)}")
+                yield pcm
+        except Exception as e:
+            print(f"[ERROR] Phonon stream failed: {e}")
+        finally:
+            print(f"[TIME] Audio stream took: {format_elapsed(time.time() - stream_start)}")
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='application/octet-stream',
+        headers={
+            'X-Sample-Rate': str(sample_rate),
+            'Cache-Control': 'no-store',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 @app.route('/produce_video', methods=['POST'])
 
