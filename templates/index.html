@@ -21,13 +21,18 @@
             min-height: 100vh;
             min-width: max-content;
             padding: 20px;
-            display: flex;
+            display: grid;
+            grid-template-columns: max-content 700px;
+            grid-template-areas:
+                "queues live"
+                "chat   email";
             gap: 20px;
-            align-items: flex-start;
+            align-items: start;
         }
         
         .container {
-            flex: 0 0 860px;
+            grid-area: chat;
+            min-width: 860px;
             background: white;
             border-radius: 12px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -788,6 +793,7 @@
 
         /* ---- Left Column (Library + Queue Panels) ---- */
         .left-column {
+            grid-area: queues;
             display: flex;
             flex-direction: column;
             gap: 15px;
@@ -1029,21 +1035,14 @@
             background: #ffcdd2;
             color: #c62828;
         }
-        /* ---- Right column: Live Speech + Quick Email ---- */
-        .right-column {
-            flex: 0 0 700px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            align-items: stretch;
-        }
-        .right-column .email-panel {
+        /* ---- Live Speech (top right) and Quick Email (bottom right) ---- */
+        body > .email-panel {
+            grid-area: email;
             width: 100%;
             position: static;
-            order: 2;
         }
         .live-speech {
-            order: 1;
+            grid-area: live;
             background: white;
             border-radius: 12px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -1071,7 +1070,10 @@
         .ls-buttons { display: flex; gap: 8px; }
         .ls-play { flex: 1; background: #3949ab; color: white; font-size: 15px; padding: 12px; }
         .ls-stop { background: #607d8b; color: white; padding: 12px 16px; }
-        .ls-play:disabled, .ls-stop:disabled { opacity: 0.45; cursor: not-allowed; }
+        .ls-pause { background: #ef6c00; color: white; padding: 12px 16px; }
+        .ls-play:disabled, .ls-stop:disabled, .ls-pause:disabled { opacity: 0.45; cursor: not-allowed; }
+        .ls-speed { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #444; }
+        .ls-speed select { flex: 1; padding: 6px 8px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 13px; background: white; color: #333; }
         .ls-status { min-height: 44px; padding: 10px 12px; border-radius: 8px; background: #f5f5f5; color: #444; font-size: 13px; line-height: 1.4; }
         .ls-status.ls-busy { background: #e3f2fd; color: #1565c0; }
         .ls-status.ls-ok { background: #e8f5e9; color: #2e7d32; }
@@ -1358,9 +1360,6 @@
         </div>
     </div>
     
-    <!-- Right column: Live Speech workspace on top, Quick Email below -->
-    <div class="right-column">
-
     <!-- Email Sender Panel -->
     <div class="email-panel">
         <h3>📧 Quick Email</h3>
@@ -1432,9 +1431,21 @@
                 <div class="ls-step">Step 2 · Listen</div>
                 <div class="ls-buttons">
                     <button type="button" id="livePlayBtn" class="btn ls-play" onclick="startLiveSpeech()" disabled>▶ Play live</button>
-                    <button type="button" id="liveStopBtn" class="btn ls-stop" onclick="stopLiveSpeech()" disabled>⏹ Stop</button>
+                    <button type="button" id="livePauseBtn" class="btn ls-pause" onclick="toggleLivePause()" disabled title="Pause and keep your place">⏸ Pause</button>
+                    <button type="button" id="liveStopBtn" class="btn ls-stop" onclick="stopLiveSpeech()" disabled title="Stop and start over from the beginning">⏹ Stop</button>
+                </div>
+                <div class="ls-speed">
+                    <label for="liveSpeedSelect">Speed</label>
+                    <select id="liveSpeedSelect" onchange="setLiveSpeed(this.value)">
+                        <option value="0.8">0.8× slower</option>
+                        <option value="1">1× normal</option>
+                        <option value="1.2">1.2× faster</option>
+                        <option value="1.5">1.5× faster</option>
+                        <option value="2">2× fastest</option>
+                    </select>
                 </div>
                 <div id="liveStatus" class="ls-status">Waiting for your text.</div>
+                <p class="ls-hint">Pause keeps your place. Stop starts over from the beginning. Speed can be changed while listening; the voice pitch shifts a little at very fast or slow speeds.</p>
 
                 <div class="ls-divider"></div>
 
@@ -1459,7 +1470,6 @@
         </div>
     </div>
 
-    </div><!-- /.right-column -->
     
     <!-- Retry All Failed Button -->
     <div class="retry-section" style="position: fixed; bottom: 20px; right: 20px; z-index: 1000;">
@@ -2592,6 +2602,9 @@
             play.disabled = !liveEngineReady || !hasText || busy;
             play.title = liveEngineReady ? '' : 'Live playback needs the Phonon voice engine. See the notice above.';
             document.getElementById('liveStopBtn').disabled = !busy;
+            const pause = document.getElementById('livePauseBtn');
+            pause.disabled = !busy;
+            pause.textContent = busy && liveStream.paused ? '▶ Resume' : '⏸ Pause';
         }
 
         function updateLiveCounter() {
@@ -2642,16 +2655,102 @@
             updateLiveCounter();
         }
 
+        let liveSpeed = parseFloat(localStorage.getItem('liveSpeed')) || 1;
+
+        function setLiveSpeed(value) {
+            const speed = parseFloat(value);
+            if (!(speed > 0)) return;
+            liveSpeed = speed;
+            localStorage.setItem('liveSpeed', String(speed));
+        }
+
+        function livePosition(stream) {
+            const now = stream.ctx.currentTime;
+            let entry = null;
+            for (const item of stream.scheduled) {
+                if (item.start <= now) entry = item; else break;
+            }
+            if (!entry) return 0;
+            return Math.min(entry.contentStart + (now - entry.start) * entry.rate, entry.contentStart + entry.duration);
+        }
+
+        // Chunks are scheduled only ~0.4 s ahead so a speed change is heard almost at once.
+        function pumpLive(stream) {
+            const ctx = stream.ctx;
+            while (stream.queue.length && stream.nextTime < ctx.currentTime + 0.4) {
+                const buffer = stream.queue.shift();
+                const rate = liveSpeed;
+                const source = ctx.createBufferSource();
+                source.buffer = buffer;
+                source.playbackRate.value = rate;
+                source.connect(ctx.destination);
+                const start = Math.max(stream.nextTime, ctx.currentTime + 0.02);
+                source.start(start);
+                stream.sources.add(source);
+                source.onended = () => stream.sources.delete(source);
+                stream.scheduled.push({ start, rate, contentStart: stream.scheduledSeconds, duration: buffer.duration });
+                stream.scheduledSeconds += buffer.duration;
+                stream.nextTime = start + buffer.duration / rate;
+                stream.started = true;
+            }
+            while (stream.scheduled.length > 1 && stream.scheduled[1].start <= ctx.currentTime) {
+                stream.scheduled.shift();
+            }
+        }
+
+        function endLiveStream(stream, message, kind) {
+            if (liveStream !== stream) return;
+            liveStream = null;
+            clearInterval(stream.timer);
+            stream.ctx.close().catch(() => {});
+            setLiveStatus(message, kind);
+            updateLiveButtons();
+        }
+
+        function tickLive(stream) {
+            if (liveStream !== stream || stream.paused) return;
+            pumpLive(stream);
+            const ctx = stream.ctx;
+            if (stream.readerDone && !stream.queue.length && ctx.currentTime >= stream.nextTime) {
+                endLiveStream(stream, `✅ Finished. Total audio: ${formatAudioLength(stream.generatedSeconds)}.`, 'ok');
+                return;
+            }
+            if (!stream.started) return;
+            const generating = stream.readerDone ? '' : ' · still generating';
+            setLiveStatus(
+                `▶ Playing at ${liveSpeed}× · ${formatAudioLength(livePosition(stream))} of ${formatAudioLength(stream.generatedSeconds)}`
+                + ` generated${generating} · first sound after ${stream.firstSoundMs} ms`,
+                'busy'
+            );
+        }
+
+        async function toggleLivePause() {
+            const stream = liveStream;
+            if (!stream) return;
+            if (stream.paused) {
+                stream.paused = false;
+                await stream.ctx.resume();
+                updateLiveButtons();
+                tickLive(stream);
+            } else {
+                stream.paused = true;
+                await stream.ctx.suspend();
+                setLiveStatus(`⏸ Paused at ${formatAudioLength(livePosition(stream))}. Press Resume to continue from here.`);
+                updateLiveButtons();
+            }
+        }
+
         function stopLiveSpeech() {
             if (!liveStream) return;
             const current = liveStream;
             liveStream = null;
+            clearInterval(current.timer);
             current.controller.abort();
             current.sources.forEach((source) => {
                 try { source.stop(); } catch (e) { /* already ended */ }
             });
             current.ctx.close().catch(() => {});
-            setLiveStatus('Stopped.');
+            setLiveStatus('Stopped. Press Play live to start again from the beginning. Next time, use Pause to keep your place.');
             updateLiveButtons();
         }
 
@@ -2662,11 +2761,17 @@
             const controller = new AbortController();
             // Created inside the click so the browser allows sound to play.
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const stream = { controller, ctx, sources: new Set() };
+            const stream = {
+                controller, ctx, sources: new Set(), queue: [], scheduled: [],
+                scheduledSeconds: 0, generatedSeconds: 0, nextTime: 0,
+                readerDone: false, paused: false, started: false,
+                firstSoundMs: 0, timer: null,
+            };
             liveStream = stream;
             updateLiveButtons();
             setLiveStatus('Starting… loading the voice. This takes a few seconds the first time.', 'busy');
             const requestedAt = performance.now();
+            stream.timer = setInterval(() => tickLive(stream), 150);
 
             try {
                 await ctx.resume();
@@ -2684,9 +2789,6 @@
                 const sampleRate = parseInt(response.headers.get('X-Sample-Rate'), 10) || 24000;
                 const reader = response.body.getReader();
                 let carry = new Uint8Array(0);
-                let nextTime = 0;
-                let generatedSeconds = 0;
-                let lastSource = null;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -2704,43 +2806,30 @@
 
                     const buffer = ctx.createBuffer(1, floats.length, sampleRate);
                     buffer.copyToChannel(floats, 0);
-                    const source = ctx.createBufferSource();
-                    source.buffer = buffer;
-                    source.connect(ctx.destination);
-                    stream.sources.add(source);
-                    source.onended = () => stream.sources.delete(source);
-
-                    nextTime = Math.max(nextTime, ctx.currentTime + 0.05);
-                    source.start(nextTime);
-                    nextTime += buffer.duration;
-                    generatedSeconds += buffer.duration;
-                    lastSource = source;
-
-                    const startedIn = Math.round(performance.now() - requestedAt);
-                    setLiveStatus(`▶ Playing live (first sound after ${startedIn} ms). Audio made so far: ${formatAudioLength(generatedSeconds)}.`, 'busy');
+                    stream.queue.push(buffer);
+                    stream.generatedSeconds += buffer.duration;
+                    if (!stream.firstSoundMs) stream.firstSoundMs = Math.round(performance.now() - requestedAt);
+                    pumpLive(stream);
                 }
 
-                if (lastSource && liveStream === stream) {
-                    setLiveStatus(`All audio is generated (${formatAudioLength(generatedSeconds)}). Finishing playback…`, 'busy');
-                    await new Promise((resolve) => { lastSource.onended = resolve; });
-                }
-                if (liveStream === stream) {
-                    setLiveStatus(`✅ Finished. Total audio: ${formatAudioLength(generatedSeconds)}.`, 'ok');
-                }
+                stream.readerDone = true;
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    setLiveStatus(`❌ ${error.message}`, 'error');
-                }
-            } finally {
-                if (liveStream === stream) {
-                    ctx.close().catch(() => {});
-                    liveStream = null;
-                    updateLiveButtons();
+                    endLiveStream(stream, `❌ ${error.message}`, 'error');
                 }
             }
         }
 
-        document.addEventListener('DOMContentLoaded', loadLiveEngineStatus);
+        document.addEventListener('DOMContentLoaded', () => {
+            const speedSelect = document.getElementById('liveSpeedSelect');
+            if (speedSelect) {
+                const saved = String(liveSpeed);
+                const known = Array.from(speedSelect.options).some((option) => option.value === saved);
+                speedSelect.value = known ? saved : '1';
+                if (!known) liveSpeed = 1;
+            }
+            loadLiveEngineStatus();
+        });
 
         async function generateAudio() {
             const text = document.getElementById('audioText').value.trim();

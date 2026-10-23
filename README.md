@@ -61,9 +61,20 @@ Optional settings:
 PHONON_LANG=en
 # PHONON_MODEL_ID=hf://gradium/phonon-31m-en
 # PHONON_VOICE=Zoey
+# PHONON_VOICE_FILE=voices/myvoice.safetensors
 ```
 
 Leave `PHONON_MODEL_ID` unset to use `ptts`'s pinned default Phonon 31m checkpoint. It can be overridden with a local checkpoint path or Hugging Face model ID. Leave `PHONON_VOICE` unset to use the model's bundled voice; named Phonon voices come from a separate catalog and may be downloaded on first use. Kokoro voice names such as `af_sarah` are not compatible with Phonon.
+
+#### Custom cloned voice (one-time clone, offline afterwards)
+
+Clone a voice once from about 10 seconds of clean speech (with the speaker's consent), then reuse the resulting `.safetensors` file offline with no reference audio:
+
+```bash
+.venv/bin/python scripts/clone_voice.py assets/reference.wav --lang en -o voices/myvoice.safetensors
+```
+
+This needs `GRADIUM_API_KEY` in `.env` and network access to `api.gradium.ai` (the only online step). Then set `PHONON_VOICE_FILE=voices/myvoice.safetensors`; it takes precedence over `PHONON_VOICE`. Keep a backup of the file: `voices/` is gitignored. The free Gradium plan allows 5 custom voices and excludes commercial use.
 
 The Phonon 31m weights are Apache-2.0. Phonon 40m checkpoints are gated and licensed CC BY-NC 4.0, so they are not the default. On this Apple-silicon setup, the native runtime selects its available device automatically. The app keeps the same subprocess, WAV output, and delivery flow when the backend changes.
 
@@ -72,9 +83,11 @@ The Phonon 31m weights are Apache-2.0. Phonon 40m checkpoints are gated and lice
 The right side of the page has a **Live Speech** workspace: paste text on the left, press **Play live**, and the audio plays while it is being generated. Text of any length works because it is split into sentences and streamed one at a time (`POST /stream_audio`, raw 16-bit mono PCM played with the Web Audio API). On an M4 Pro Phonon generates about 23x faster than real time.
 
 - **Phonon only.** Live playback is enabled only when `TTS_BACKEND=phonon`. With Kokoro (or any other backend) the page shows a notice explaining how to switch, Play is disabled, and `/stream_audio` returns an error.
+- **Pause / Resume** keeps your place; **Stop** resets, and the next Play starts from the beginning.
+- **Speed** (0.8x to 2x) can be changed while listening and is remembered in the browser. It uses the browser's playback rate, so the voice pitch shifts slightly at the extremes.
 - **Save as audio file** stays available for every backend and uses the normal file pipeline.
 - The Phonon model stays loaded in the Flask process after the first Play, so the first Play after a restart takes a few extra seconds. One stream plays at a time, and it uses the `PHONON_*` settings above.
-- Quick Email / Telegram sit below the workspace.
+- Quick Email sits below Live Speech, and the chat panel is on the bottom row.
 
 Copilot CLI is used for transcript condensation and intro generation; its tools are disabled. Context, token budgets, and chunking are configurable through `COPILOT_*` and `CONDENSATION_*` environment variables.
 
