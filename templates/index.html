@@ -1445,7 +1445,7 @@
                     </select>
                 </div>
                 <div id="liveStatus" class="ls-status">Waiting for your text.</div>
-                <p class="ls-hint">Pause keeps your place. Stop starts over from the beginning. Speed can be changed while listening; the voice pitch shifts a little at very fast or slow speeds.</p>
+                <p class="ls-hint">Pause keeps your place. Stop starts over from the beginning. Speed can be changed while listening and keeps the voice natural.</p>
 
                 <div class="ls-divider"></div>
 
@@ -1496,6 +1496,7 @@
         </button>
     </div>
     
+    <script src="{{ url_for('static', filename='speech_stretcher.js') }}"></script>
     <script>
         let selectedFiles = [];
         let isLoading = false;
@@ -2671,26 +2672,51 @@
                 if (item.start <= now) entry = item; else break;
             }
             if (!entry) return 0;
-            return Math.min(entry.contentStart + (now - entry.start) * entry.rate, entry.contentStart + entry.duration);
+            const progress = Math.min(1, Math.max(0, (now - entry.start) / entry.duration));
+            return entry.inStart + progress * (entry.inEnd - entry.inStart);
         }
 
-        // Chunks are scheduled only ~0.4 s ahead so a speed change is heard almost at once.
+        function resampleLinear(samples, fromRate, toRate) {
+            if (fromRate === toRate) return samples;
+            const length = Math.max(1, Math.round(samples.length * toRate / fromRate));
+            const out = new Float32Array(length);
+            const step = fromRate / toRate;
+            for (let i = 0; i < length; i++) {
+                const pos = i * step;
+                const a = Math.floor(pos);
+                const frac = pos - a;
+                const x0 = samples[Math.min(a, samples.length - 1)];
+                const x1 = samples[Math.min(a + 1, samples.length - 1)];
+                out[i] = x0 + (x1 - x0) * frac;
+            }
+            return out;
+        }
+
+        // Audio is stretched to the chosen speed without changing pitch, and scheduled
+        // only ~0.4 s ahead so a speed change is heard almost at once.
         function pumpLive(stream) {
             const ctx = stream.ctx;
-            while (stream.queue.length && stream.nextTime < ctx.currentTime + 0.4) {
-                const buffer = stream.queue.shift();
-                const rate = liveSpeed;
+            const stretcher = stream.stretcher;
+            if (!stretcher) return;
+            const rate = ctx.sampleRate;
+            while (stream.nextTime < ctx.currentTime + 0.4) {
+                const inBefore = stretcher.pos / rate;
+                const samples = stretcher.read(2048, liveSpeed);
+                if (!samples.length) break;
+                const buffer = ctx.createBuffer(1, samples.length, rate);
+                buffer.copyToChannel(samples, 0);
                 const source = ctx.createBufferSource();
                 source.buffer = buffer;
-                source.playbackRate.value = rate;
                 source.connect(ctx.destination);
                 const start = Math.max(stream.nextTime, ctx.currentTime + 0.02);
                 source.start(start);
                 stream.sources.add(source);
                 source.onended = () => stream.sources.delete(source);
-                stream.scheduled.push({ start, rate, contentStart: stream.scheduledSeconds, duration: buffer.duration });
-                stream.scheduledSeconds += buffer.duration;
-                stream.nextTime = start + buffer.duration / rate;
+                stream.scheduled.push({
+                    start, duration: buffer.duration,
+                    inStart: inBefore, inEnd: Math.min(stretcher.pos, stretcher.inputEnd) / rate,
+                });
+                stream.nextTime = start + buffer.duration;
                 stream.started = true;
             }
             while (stream.scheduled.length > 1 && stream.scheduled[1].start <= ctx.currentTime) {
@@ -2711,7 +2737,7 @@
             if (liveStream !== stream || stream.paused) return;
             pumpLive(stream);
             const ctx = stream.ctx;
-            if (stream.readerDone && !stream.queue.length && ctx.currentTime >= stream.nextTime) {
+            if (stream.readerDone && stream.stretcher && stream.stretcher.finished && ctx.currentTime >= stream.nextTime) {
                 endLiveStream(stream, `✅ Finished. Total audio: ${formatAudioLength(stream.generatedSeconds)}.`, 'ok');
                 return;
             }
@@ -2760,10 +2786,16 @@
 
             const controller = new AbortController();
             // Created inside the click so the browser allows sound to play.
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            let ctx;
+            try {
+                ctx = new AudioCtx({ sampleRate: 24000 });
+            } catch (e) {
+                ctx = new AudioCtx();
+            }
             const stream = {
-                controller, ctx, sources: new Set(), queue: [], scheduled: [],
-                scheduledSeconds: 0, generatedSeconds: 0, nextTime: 0,
+                controller, ctx, sources: new Set(), stretcher: null, scheduled: [],
+                generatedSeconds: 0, nextTime: 0,
                 readerDone: false, paused: false, started: false,
                 firstSoundMs: 0, timer: null,
             };
@@ -2787,6 +2819,7 @@
                 }
 
                 const sampleRate = parseInt(response.headers.get('X-Sample-Rate'), 10) || 24000;
+                stream.stretcher = new SpeechStretcher(ctx.sampleRate);
                 const reader = response.body.getReader();
                 let carry = new Uint8Array(0);
 
@@ -2804,14 +2837,14 @@
                     const floats = new Float32Array(pcm.length);
                     for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
 
-                    const buffer = ctx.createBuffer(1, floats.length, sampleRate);
-                    buffer.copyToChannel(floats, 0);
-                    stream.queue.push(buffer);
-                    stream.generatedSeconds += buffer.duration;
+                    const samples = resampleLinear(floats, sampleRate, ctx.sampleRate);
+                    stream.stretcher.push(samples);
+                    stream.generatedSeconds += samples.length / ctx.sampleRate;
                     if (!stream.firstSoundMs) stream.firstSoundMs = Math.round(performance.now() - requestedAt);
                     pumpLive(stream);
                 }
 
+                stream.stretcher.end();
                 stream.readerDone = true;
             } catch (error) {
                 if (error.name !== 'AbortError') {

@@ -84,7 +84,7 @@ The right side of the page has a **Live Speech** workspace: paste text on the le
 
 - **Phonon only.** Live playback is enabled only when `TTS_BACKEND=phonon`. With Kokoro (or any other backend) the page shows a notice explaining how to switch, Play is disabled, and `/stream_audio` returns an error.
 - **Pause / Resume** keeps your place; **Stop** resets, and the next Play starts from the beginning.
-- **Speed** (0.8x to 2x) can be changed while listening and is remembered in the browser. It uses the browser's playback rate, so the voice pitch shifts slightly at the extremes.
+- **Speed** (0.8x to 2x) can be changed while listening and is remembered in the browser. It uses a pitch-preserving time stretch (WSOLA, `static/speech_stretcher.js`), so the voice keeps its natural pitch at every speed.
 - **Save as audio file** stays available for every backend and uses the normal file pipeline.
 - The Phonon model stays loaded in the Flask process after the first Play, so the first Play after a restart takes a few extra seconds. One stream plays at a time, and it uses the `PHONON_*` settings above.
 - Quick Email sits below Live Speech, and the chat panel is on the bottom row.
