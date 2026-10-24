@@ -419,9 +419,14 @@ def condense_content(
             / _ratio_setting("CONDENSATION_MAP_OUTPUT_RATIO", 0.4)
         ),
     )
-    if _token_count(content, encoding) <= one_pass_input_budget:
+    source_tokens = _token_count(content, encoding)
+    if source_tokens <= one_pass_input_budget:
         direct_prompt = _map_input(content, _prompts)
         if _fits_context(direct_prompt, current_model, encoding):
+            print(
+                f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Single pass: no chunking "
+                f"({source_tokens} tokens <= {one_pass_input_budget} one-pass limit)"
+            )
             direct_output = _generate_script(
                 current_model, direct_prompt, "direct summary", checkpoint,
                 checkpoint_key, "map_retry_counts", "direct",
@@ -687,7 +692,7 @@ def condense_content(
 
             batch_results.append(cleaned_batch)
             previous_context = cleaned_batch  # use dense reduce result for LLM context continuity
-            print(f"[SUCCESS] REDUCE batch {batch_idx + 1} complete: {len(cleaned_batch)} chars")
+            print(f"[SUCCESS] REDUCE batch {batch_idx + 1}/{num_batches} complete: {len(cleaned_batch)} chars")
 
         final_output = "\n\n".join(batch_results)
         print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] All REDUCE batches combined: {len(final_output)} chars")
