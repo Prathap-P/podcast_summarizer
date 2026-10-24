@@ -9,6 +9,7 @@ KOKORO_LANG_CODE = os.getenv("KOKORO_LANG_CODE", "a")
 PHONON_MODEL_ID = os.getenv("PHONON_MODEL_ID", "")
 PHONON_LANG = os.getenv("PHONON_LANG", "en")
 PHONON_VOICE = os.getenv("PHONON_VOICE", "")
+PHONON_VOICE_FILE = os.getenv("PHONON_VOICE_FILE", "")
 
 def _parse_kokoro_speed() -> float:
     raw = os.getenv("KOKORO_SPEED", "1.0")

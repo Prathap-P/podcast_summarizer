@@ -23,3 +23,6 @@ CHANGELOG.md
 models/
 VibeVoice/
 .github/instructions/wmt-copilot.instructions.md
+ANDROID_TTS_APP_HANDOFF.md
+assets/
+voices/

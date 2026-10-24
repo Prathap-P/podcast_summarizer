@@ -13,6 +13,7 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
 _SOFT_BREAK = re.compile(r"(?<=[,;:])\s+")
 
 _tts = None
+_voice: str | None = None
 _tts_lock = threading.Lock()
 _stream_lock = threading.Lock()
 
@@ -86,19 +87,34 @@ def _split_words(text: str, max_chars: int) -> list[str]:
 
 def _get_tts():
     """Load Phonon once and keep it resident for later requests."""
-    global _tts
+    global _tts, _voice
     with _tts_lock:
         if _tts is None:
-            from audio_config import PHONON_LANG, PHONON_MODEL_ID, PHONON_VOICE
+            from audio_config import (
+                PHONON_LANG,
+                PHONON_MODEL_ID,
+                PHONON_VOICE,
+                PHONON_VOICE_FILE,
+            )
+            from phonon_tts import CUSTOM_VOICE_NAME, resolve_voice_file
             import ptts
 
+            voice_file = resolve_voice_file(PHONON_VOICE_FILE)
             print(f"[INFO]    [{_ts()}] [PHONON_STREAM] Loading resident model")
-            _tts = ptts.TTS(
+            tts = ptts.TTS(
                 model=PHONON_MODEL_ID.strip() or None,
                 device=None,
                 lang=PHONON_LANG,
-                voice=PHONON_VOICE.strip() or None,
+                voice=None if voice_file else (PHONON_VOICE.strip() or None),
             )
+            if voice_file is not None:
+                tts.add_voice(CUSTOM_VOICE_NAME, voice_file)
+                _voice = CUSTOM_VOICE_NAME
+                print(
+                    f"[INFO]    [{_ts()}] [PHONON_STREAM] Custom voice: "
+                    f"{voice_file.name}"
+                )
+            _tts = tts
             print(
                 f"[INFO]    [{_ts()}] [PHONON_STREAM] Ready: "
                 f"device={_tts.device}, sample_rate={_tts.sample_rate}"
@@ -131,7 +147,8 @@ def stream_pcm16(text: str) -> Iterator[bytes]:
                 f"[DEBUG]   [PHONON_STREAM] Chunk {index}/{len(pieces)} "
                 f"({len(piece)} chars)"
             )
-            with tts.stream(piece) as audio:
+            stream_kwargs = {"voice": _voice} if _voice else {}
+            with tts.stream(piece, **stream_kwargs) as audio:
                 for chunk in audio:
                     data = to_pcm16(chunk)
                     if data:

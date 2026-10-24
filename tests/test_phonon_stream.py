@@ -1,11 +1,15 @@
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import numpy as np
 
+import audio_config
 import phonon_stream
+import phonon_tts
 
 
 class SplitTextTests(unittest.TestCase):
@@ -80,10 +84,39 @@ class StreamTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"ptts": fake_ptts}),
             patch.object(phonon_stream, "_tts", None),
+            patch.object(audio_config, "PHONON_VOICE_FILE", ""),
         ):
             self.assertEqual(phonon_stream.get_sample_rate(), 24000)
             phonon_stream.get_sample_rate()
         fake_ptts.TTS.assert_called_once()
+
+    def test_custom_voice_file_is_registered_and_used_for_streaming(self):
+        fake_tts = Mock(device="cpu", sample_rate=24000)
+        fake_tts.stream.side_effect = lambda piece, voice=None: _fake_stream_ctx(
+            [np.array([0.5], dtype=np.float32)]
+        )
+        fake_ptts = types.ModuleType("ptts")
+        fake_ptts.TTS = Mock(return_value=fake_tts)
+        with tempfile.TemporaryDirectory() as tmp:
+            voice_file = Path(tmp) / "myvoice.safetensors"
+            voice_file.write_bytes(b"x")
+            with (
+                patch.dict(sys.modules, {"ptts": fake_ptts}),
+                patch.object(phonon_stream, "_tts", None),
+                patch.object(phonon_stream, "_voice", None),
+                patch.object(audio_config, "PHONON_VOICE", "Zoey"),
+                patch.object(audio_config, "PHONON_VOICE_FILE", str(voice_file)),
+            ):
+                out = list(phonon_stream.stream_pcm16("Hello there."))
+
+        self.assertEqual(fake_ptts.TTS.call_args.kwargs["voice"], None)
+        fake_tts.add_voice.assert_called_once_with(
+            phonon_tts.CUSTOM_VOICE_NAME, voice_file
+        )
+        fake_tts.stream.assert_called_once_with(
+            "Hello there.", voice=phonon_tts.CUSTOM_VOICE_NAME
+        )
+        self.assertEqual(len(out), 1)
 
 
 class LiveSpeechRouteTests(unittest.TestCase):

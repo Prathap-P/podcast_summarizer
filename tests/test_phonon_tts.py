@@ -15,6 +15,11 @@ import phonon_tts
 
 
 class PhononTtsTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(audio_config, "PHONON_VOICE_FILE", "")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_generate_audio_uses_default_checkpoint_and_voice(self):
         fake_tts = Mock()
         fake_tts.sample_rate = 24000
@@ -86,6 +91,53 @@ class PhononTtsTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError, "mono PCM"),
         ):
             phonon_tts.generate_audio_phonon("Hello.")
+
+    def test_generate_audio_registers_and_uses_custom_voice_file(self):
+        fake_tts = Mock()
+        fake_tts.sample_rate = 24000
+        fake_tts.synth.return_value = np.array([0.3], dtype=np.float32)
+        fake_ptts = types.ModuleType("ptts")
+        fake_ptts.DEFAULT_MODEL = "unused"
+        fake_ptts.TTS = Mock(return_value=fake_tts)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            voice_file = Path(tmp) / "myvoice.safetensors"
+            voice_file.write_bytes(b"x")
+            with (
+                patch.dict(sys.modules, {"ptts": fake_ptts}),
+                patch.object(audio_config, "PHONON_MODEL_ID", ""),
+                patch.object(audio_config, "PHONON_LANG", "en"),
+                patch.object(audio_config, "PHONON_VOICE", "Zoey"),
+                patch.object(audio_config, "PHONON_VOICE_FILE", str(voice_file)),
+            ):
+                phonon_tts.generate_audio_phonon("Hello.")
+
+        fake_ptts.TTS.assert_called_once_with(
+            model=None, device=None, lang="en", voice=None
+        )
+        fake_tts.add_voice.assert_called_once_with(
+            phonon_tts.CUSTOM_VOICE_NAME, voice_file
+        )
+        fake_tts.synth.assert_called_once_with(
+            "Hello.", voice=phonon_tts.CUSTOM_VOICE_NAME
+        )
+
+    def test_generate_audio_rejects_missing_voice_file(self):
+        fake_ptts = types.ModuleType("ptts")
+        fake_ptts.DEFAULT_MODEL = "unused"
+        fake_ptts.TTS = Mock()
+
+        with (
+            patch.dict(sys.modules, {"ptts": fake_ptts}),
+            patch.object(audio_config, "PHONON_MODEL_ID", ""),
+            patch.object(audio_config, "PHONON_LANG", "en"),
+            patch.object(audio_config, "PHONON_VOICE", ""),
+            patch.object(audio_config, "PHONON_VOICE_FILE", "/nonexistent/v.safetensors"),
+            self.assertRaises(FileNotFoundError),
+        ):
+            phonon_tts.generate_audio_phonon("Hello.")
+
+        fake_ptts.TTS.assert_not_called()
 
 
 class TtsWorkerTests(unittest.TestCase):
