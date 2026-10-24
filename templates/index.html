@@ -2641,7 +2641,9 @@
                 liveEngineReady = !!info.live_speech;
                 if (liveEngineReady) {
                     banner.className = 'ls-banner ls-banner-ok';
-                    banner.textContent = '✅ Voice engine: Phonon. Live playback is on. The first Play after starting the app takes a few extra seconds while the voice loads.';
+                    banner.textContent = '✅ Voice engine: Phonon. Live playback is on. '
+                        + (info.voice_info ? info.voice_info + ' ' : '')
+                        + 'The first Play after starting the app takes a few extra seconds while the voice loads.';
                 } else {
                     banner.className = 'ls-banner ls-banner-warn';
                     banner.innerHTML = `⚠️ Live playback is off. Your app is using the <strong>${info.backend}</strong> voice engine, which can only make a finished audio file. `
@@ -2745,7 +2747,7 @@
             const generating = stream.readerDone ? '' : ' · still generating';
             setLiveStatus(
                 `▶ Playing at ${liveSpeed}× · ${formatAudioLength(livePosition(stream))} of ${formatAudioLength(stream.generatedSeconds)}`
-                + ` generated${generating} · first sound after ${stream.firstSoundMs} ms`,
+                + ` generated${generating} · ${stream.voice ? 'voice ' + stream.voice + ' · ' : ''}first sound after ${stream.firstSoundMs} ms`,
                 'busy'
             );
         }
@@ -2797,7 +2799,7 @@
                 controller, ctx, sources: new Set(), stretcher: null, scheduled: [],
                 generatedSeconds: 0, nextTime: 0,
                 readerDone: false, paused: false, started: false,
-                firstSoundMs: 0, timer: null,
+                firstSoundMs: 0, timer: null, voice: '',
             };
             liveStream = stream;
             updateLiveButtons();
@@ -2819,6 +2821,7 @@
                 }
 
                 const sampleRate = parseInt(response.headers.get('X-Sample-Rate'), 10) || 24000;
+                stream.voice = response.headers.get('X-Voice') || '';
                 stream.stretcher = new SpeechStretcher(ctx.sampleRate);
                 const reader = response.body.getReader();
                 let carry = new Uint8Array(0);

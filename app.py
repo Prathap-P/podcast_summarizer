@@ -52,6 +52,16 @@ print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] ASR backend: {ASR_BACK
 
 app = Flask(__name__)
 
+
+def _pick_phonon_voice() -> str:
+    """Pick the Phonon voice for one generation; '' for any other backend."""
+    if TTS_BACKEND != "phonon":
+        return ""
+    import phonon_voices
+
+    return phonon_voices.select_voice()
+
+
 # Global conversation state (in production, use session-based storage)
 conversation_chain = None
 current_mode = None
@@ -411,6 +421,11 @@ def load_content():
                     checkpoint["tts_voice"] = tts_voice
                     save_checkpoint(checkpoint_key, checkpoint)
                 print(f"[INFO]    [{datetime.now().strftime('%H:%M:%S')}] TTS voice selected: {tts_voice}")
+            elif not tts_voice and TTS_BACKEND == "phonon":
+                tts_voice = _pick_phonon_voice()
+                if tts_voice and checkpoint:
+                    checkpoint["tts_voice"] = tts_voice
+                    save_checkpoint(checkpoint_key, checkpoint)
 
             try:
                 audio_file_path = run_in_subprocess(model_worker.tts_worker, tts_input, "", tts_voice, _video_id or "", _yt_title)
@@ -1021,7 +1036,7 @@ def chat():
                 print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for response ({len(response_text)} chars)...")
                 audio_start_time = time.time()
                 
-                audio_file_path = run_in_subprocess(model_worker.tts_worker, response_text, "")
+                audio_file_path = run_in_subprocess(model_worker.tts_worker, response_text, "", _pick_phonon_voice())
                 audio_file = os.path.basename(audio_file_path)
                 
                 audio_time = time.time() - audio_start_time
@@ -1134,7 +1149,7 @@ def stream_chat():
                     print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] Generating audio for response ({len(complete_response_text)} chars)...")
                     audio_start_time = time.time()
 
-                    audio_file_path = run_in_subprocess(model_worker.tts_worker, complete_response_text, "")
+                    audio_file_path = run_in_subprocess(model_worker.tts_worker, complete_response_text, "", _pick_phonon_voice())
                     audio_file = os.path.basename(audio_file_path)
 
                     audio_time = time.time() - audio_start_time
@@ -1214,7 +1229,7 @@ def text_to_audio():
 
         audio_start = time.time()
         try:
-            audio_file_path = run_in_subprocess(model_worker.tts_worker, text, "")
+            audio_file_path = run_in_subprocess(model_worker.tts_worker, text, "", _pick_phonon_voice())
         except Exception:
             print(
                 f"[TIME] Audio generation took: "
@@ -1253,10 +1268,16 @@ LIVE_SPEECH_NEEDS_PHONON = (
 def tts_status():
     """Tell the page which voice engine is active and whether live playback works."""
     live = TTS_BACKEND == 'phonon'
+    voice_info = ''
+    if live:
+        import phonon_voices
+
+        voice_info = phonon_voices.describe()
     return jsonify({
         'backend': TTS_BACKEND,
         'live_speech': live,
         'message': '' if live else LIVE_SPEECH_NEEDS_PHONON,
+        'voice_info': voice_info,
     })
 
 
@@ -1272,21 +1293,24 @@ def stream_audio():
         return jsonify({'success': False, 'error': 'Please paste some text first.'}), 400
 
     import phonon_stream
+    import phonon_voices
 
     try:
         sample_rate = phonon_stream.get_sample_rate()
+        voice = phonon_stream.resolve_voice(phonon_voices.select_voice())
     except Exception as e:
         error_msg = f"Could not start the Phonon voice: {e}"
         print(f"[ERROR] {error_msg}")
         return jsonify({'success': False, 'error': error_msg}), 500
 
-    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] stream_audio: Streaming {len(text)} chars")
+    voice_label = phonon_voices.label_for(voice)
+    print(f"[INFO] [{datetime.now().strftime('%H:%M:%S')}] stream_audio: Streaming {len(text)} chars, voice={voice_label}")
 
     def generate():
         stream_start = time.time()
         first_chunk_at = None
         try:
-            for pcm in phonon_stream.stream_pcm16(text):
+            for pcm in phonon_stream.stream_pcm16(text, voice):
                 if first_chunk_at is None:
                     first_chunk_at = time.time() - stream_start
                     print(f"[TIME] Stream first audio after: {format_elapsed(first_chunk_at)}")
@@ -1301,6 +1325,7 @@ def stream_audio():
         mimetype='application/octet-stream',
         headers={
             'X-Sample-Rate': str(sample_rate),
+            'X-Voice': voice_label,
             'Cache-Control': 'no-store',
             'X-Accel-Buffering': 'no',
         },

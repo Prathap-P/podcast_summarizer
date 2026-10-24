@@ -61,10 +61,24 @@ Optional settings:
 PHONON_LANG=en
 # PHONON_MODEL_ID=hf://gradium/phonon-31m-en
 # PHONON_VOICE=Zoey
+# PHONON_VOICE_POOL=Zoey,Juniper,Harper,Delia
 # PHONON_VOICE_FILE=voices/myvoice.safetensors
 ```
 
 Leave `PHONON_MODEL_ID` unset to use `ptts`'s pinned default Phonon 31m checkpoint. It can be overridden with a local checkpoint path or Hugging Face model ID. Leave `PHONON_VOICE` unset to use the model's bundled voice; named Phonon voices come from a separate catalog and may be downloaded on first use. Kokoro voice names such as `af_sarah` are not compatible with Phonon.
+
+#### Voice rotation
+
+By default Phonon picks one voice at random for every audio generation, so the output does not sound the same every time. The pool is `PHONON_VOICE_POOL` (default `Zoey,Juniper,Harper,Delia`; separate names with commas, any name from the Phonon voice catalog works, so you can extend it later). A voice is never used twice in a row, and a video keeps the same voice when you retry or resume it.
+
+The voice is chosen in this order:
+
+1. `PHONON_VOICE_FILE` (your cloned voice) always wins and turns rotation off.
+2. `PHONON_VOICE` pins one voice and turns rotation off. Leave it empty or unset to rotate.
+3. `PHONON_VOICE_POOL` rotation.
+4. Otherwise the model's default voice.
+
+Each voice other than the bundled one is downloaded the first time it is used (a few hundred KB each). If a voice cannot be downloaded, for example behind a proxy that blocks Hugging Face, it is skipped with a warning and another voice is used instead, so audio generation never fails because of it. Live Speech shows the voice in use, for example `voice Harper`.
 
 #### Custom cloned voice (one-time clone, offline afterwards)
 

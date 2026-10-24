@@ -14,6 +14,7 @@ _SOFT_BREAK = re.compile(r"(?<=[,;:])\s+")
 
 _tts = None
 _voice: str | None = None
+_usable_voices: set[str] = set()
 _tts_lock = threading.Lock()
 _stream_lock = threading.Lock()
 
@@ -127,27 +128,67 @@ def get_sample_rate() -> int:
     return int(_get_tts().sample_rate)
 
 
+def resolve_voice(chosen: str) -> str:
+    """Return a voice that can actually be loaded, starting with `chosen`.
+
+    Probing downloads a catalog voice on first use. A voice that fails is
+    remembered so later picks skip it. Returns '' for the model default.
+    A cloned voice file or a pinned PHONON_VOICE never needs resolving.
+    """
+    if _voice or not chosen:
+        return ""
+    from phonon_voices import fallback_order, mark_unavailable
+
+    tts = _get_tts()
+    with _stream_lock:
+        for candidate in fallback_order(chosen):
+            if candidate is None:
+                print(
+                    f"[WARNING] [{_ts()}] [PHONON_STREAM] No pool voice could "
+                    "be loaded; using the model default voice"
+                )
+                return ""
+            if candidate in _usable_voices:
+                return candidate
+            try:
+                with tts.stream(".", voice=candidate):
+                    pass
+            except OSError as e:
+                mark_unavailable(candidate)
+                print(
+                    f"[WARNING] [{_ts()}] [PHONON_STREAM] Voice {candidate!r} "
+                    f"could not be loaded ({str(e)[:90]}); trying the next voice"
+                )
+                continue
+            _usable_voices.add(candidate)
+            return candidate
+    return ""
+
+
 def to_pcm16(chunk: np.ndarray) -> bytes:
     """Convert a float32 chunk in [-1, 1] to little-endian int16 bytes."""
     samples = np.clip(np.asarray(chunk, dtype=np.float32), -1.0, 1.0)
     return (samples * 32767.0).astype("<i2").tobytes()
 
 
-def stream_pcm16(text: str) -> Iterator[bytes]:
+def stream_pcm16(text: str, voice: str = "") -> Iterator[bytes]:
     """Yield int16 PCM bytes for text, one sentence group at a time.
 
-    Streams are serialised: Phonon runs one generation at a time. Closing the
-    iterator early (client disconnect or Stop) stops generation.
+    `voice` is a catalog voice (see resolve_voice); a cloned voice file always
+    wins over it. Streams are serialised: Phonon runs one generation at a
+    time. Closing the iterator early (client disconnect or Stop) stops
+    generation.
     """
     tts = _get_tts()
     pieces = split_text(text)
+    active = _voice or voice.strip()
+    stream_kwargs = {"voice": active} if active else {}
     with _stream_lock:
         for index, piece in enumerate(pieces, start=1):
             print(
                 f"[DEBUG]   [PHONON_STREAM] Chunk {index}/{len(pieces)} "
                 f"({len(piece)} chars)"
             )
-            stream_kwargs = {"voice": _voice} if _voice else {}
             with tts.stream(piece, **stream_kwargs) as audio:
                 for chunk in audio:
                     data = to_pcm16(chunk)

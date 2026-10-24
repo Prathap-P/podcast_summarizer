@@ -97,7 +97,10 @@ def _generate_tts(text: str, backend: str, voice: str, video_id: str, video_titl
 
     elif backend == "phonon":
         from phonon_tts import generate_audio_phonon
-        audio, sample_rate = generate_audio_phonon(text)
+        if voice:
+            audio, sample_rate = generate_audio_phonon(text, voice=voice)
+        else:
+            audio, sample_rate = generate_audio_phonon(text)
         final_path = create_audio_file(audio, sample_rate=sample_rate, video_id=video_id, video_title=video_title)
 
     else:
