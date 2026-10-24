@@ -65,7 +65,7 @@ PHONON_LANG=en
 # PHONON_VOICE_FILE=voices/myvoice.safetensors
 ```
 
-Leave `PHONON_MODEL_ID` unset to use `ptts`'s pinned default Phonon 31m checkpoint. It can be overridden with a local checkpoint path or Hugging Face model ID. Leave `PHONON_VOICE` unset to use the model's bundled voice; named Phonon voices come from a separate catalog and may be downloaded on first use. Kokoro voice names such as `af_sarah` are not compatible with Phonon.
+Leave `PHONON_MODEL_ID` unset to use `ptts`'s pinned default Phonon 31m checkpoint. It can be overridden with a local checkpoint path or Hugging Face model ID. Named Phonon voices come from a separate catalog and are downloaded on first use. With `PHONON_VOICE` unset the voice is chosen by the rotation described below. Kokoro voice names such as `af_sarah` are not compatible with Phonon.
 
 #### Voice rotation
 
@@ -100,7 +100,7 @@ The right side of the page has a **Live Speech** workspace: paste text on the le
 - **Pause / Resume** keeps your place; **Stop** resets, and the next Play starts from the beginning.
 - **Speed** (0.8x to 2x) can be changed while listening and is remembered in the browser. It uses a pitch-preserving time stretch (WSOLA, `static/speech_stretcher.js`), so the voice keeps its natural pitch at every speed.
 - **Save as audio file** stays available for every backend and uses the normal file pipeline.
-- The Phonon model stays loaded in the Flask process after the first Play, so the first Play after a restart takes a few extra seconds. One stream plays at a time, and it uses the `PHONON_*` settings above, including `PHONON_VOICE_FILE` for your cloned voice (loaded once with the resident model, so restart Flask after changing it).
+- The Phonon model stays loaded in the Flask process after the first Play, so the first Play after a restart takes a few extra seconds. One stream plays at a time (a second one, for example from another tab, gets a clear "still playing" message after 3 seconds instead of hanging), and it uses the `PHONON_*` settings above, including `PHONON_VOICE_FILE` for your cloned voice (loaded once with the resident model, so restart Flask after changing it).
 - Quick Email sits below Live Speech, and the chat panel is on the bottom row.
 
 Copilot CLI is used for transcript condensation and intro generation; its tools are disabled. Context, token budgets, and chunking are configurable through `COPILOT_*` and `CONDENSATION_*` environment variables.

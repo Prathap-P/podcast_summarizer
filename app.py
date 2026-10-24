@@ -1296,8 +1296,11 @@ def stream_audio():
     import phonon_voices
 
     try:
+        phonon_stream.wait_until_idle()
         sample_rate = phonon_stream.get_sample_rate()
         voice = phonon_stream.resolve_voice(phonon_voices.select_voice())
+    except phonon_stream.StreamBusyError as e:
+        return jsonify({'success': False, 'error': str(e)}), 409
     except Exception as e:
         error_msg = f"Could not start the Phonon voice: {e}"
         print(f"[ERROR] {error_msg}")

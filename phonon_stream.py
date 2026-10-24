@@ -19,6 +19,27 @@ _tts_lock = threading.Lock()
 _stream_lock = threading.Lock()
 
 
+BUSY_WAIT_SECONDS = 3
+
+
+class StreamBusyError(RuntimeError):
+    """Another Live Speech stream is still playing."""
+
+
+def wait_until_idle(timeout: float = BUSY_WAIT_SECONDS) -> None:
+    """Raise StreamBusyError if a stream is still running after `timeout` seconds.
+
+    A short wait covers pressing Stop and then Play straight away, while a
+    genuinely busy engine fails fast instead of hanging the page.
+    """
+    if not _stream_lock.acquire(timeout=timeout):
+        raise StreamBusyError(
+            "Another Live Speech stream is still playing. Press Stop there "
+            "(or close that tab), or wait for it to finish, then try again."
+        )
+    _stream_lock.release()
+
+
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
 

@@ -119,6 +119,30 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
 
 
+class StreamBusyTests(unittest.TestCase):
+    def test_idle_engine_passes_straight_through(self):
+        phonon_stream.wait_until_idle(timeout=0.05)
+
+    def test_busy_engine_fails_fast_with_a_clear_message(self):
+        phonon_stream._stream_lock.acquire()
+        try:
+            with self.assertRaises(phonon_stream.StreamBusyError) as caught:
+                phonon_stream.wait_until_idle(timeout=0.05)
+        finally:
+            phonon_stream._stream_lock.release()
+        self.assertIn("Press Stop", str(caught.exception))
+
+    def test_lock_released_quickly_is_waited_for(self):
+        import threading
+        import time
+
+        phonon_stream._stream_lock.acquire()
+        threading.Timer(0.1, phonon_stream._stream_lock.release).start()
+        started = time.time()
+        phonon_stream.wait_until_idle(timeout=2)
+        self.assertLess(time.time() - started, 1.5)
+
+
 class LiveSpeechRouteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -148,6 +172,21 @@ class LiveSpeechRouteTests(unittest.TestCase):
             response = self.client.post("/stream_audio", json={"text": "Hi."})
         self.assertEqual(response.status_code, 400)
         self.assertIn("Phonon", response.get_json()["error"])
+        load.assert_not_called()
+
+    def test_stream_returns_409_while_another_stream_is_playing(self):
+        with (
+            patch.object(self.flask_app, "TTS_BACKEND", "phonon"),
+            patch.object(
+                phonon_stream,
+                "wait_until_idle",
+                side_effect=phonon_stream.StreamBusyError("busy now"),
+            ),
+            patch.object(phonon_stream, "get_sample_rate") as load,
+        ):
+            response = self.client.post("/stream_audio", json={"text": "Hi."})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["error"], "busy now")
         load.assert_not_called()
 
     def test_stream_rejects_empty_text_for_phonon(self):
