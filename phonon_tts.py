@@ -62,7 +62,7 @@ def generate_audio_phonon(text: str, voice: str = "") -> tuple[np.ndarray, int]:
     picked = voice.strip()
     configured = PHONON_VOICE.strip()
     voice_file = resolve_voice_file(PHONON_VOICE_FILE)
-    rotating = voice_file is None and bool(picked)
+    rotating = voice_file is None and not configured and bool(picked)
     model_label = model_id or ptts.DEFAULT_MODEL
     if voice_file:
         voice_label = f"file:{voice_file.name}"

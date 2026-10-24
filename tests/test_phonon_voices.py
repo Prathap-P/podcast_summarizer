@@ -71,6 +71,16 @@ class PoolParsingTests(VoiceTestCase):
             )
 
 
+class UnknownVoiceWarningTests(VoiceTestCase):
+    def test_unknown_voice_warns_only_once(self):
+        self.configure()
+        with patch("builtins.print") as printed:
+            for _ in range(5):
+                phonon_voices.parse_voice_pool("Zoey,Nobody")
+        warnings = [c for c in printed.call_args_list if "Nobody" in str(c)]
+        self.assertEqual(len(warnings), 1)
+
+
 class PickTests(unittest.TestCase):
     def test_never_repeats_previous_voice(self):
         names = ["A", "B", "C", "D"]
@@ -230,6 +240,15 @@ class GenerateWithPickedVoiceTests(VoiceTestCase):
             phonon_tts.generate_audio_phonon("Hi.", voice="Harper")
         last = tts.synth.call_args_list[-1]
         self.assertEqual(last, unittest.mock.call("Hi."))
+
+    def test_pinned_voice_beats_a_stale_picked_voice(self):
+        self.configure(voice="Zoey")
+        tts = self._tts()
+        module = _fake_ptts(tts)
+        with patch.dict(sys.modules, {"ptts": module}):
+            phonon_tts.generate_audio_phonon("Hello.", voice="Harper")
+        self.assertEqual(module.TTS.call_args.kwargs["voice"], "Zoey")
+        tts.synth.assert_called_once_with("Hello.")
 
     def test_without_a_picked_voice_behaviour_is_unchanged(self):
         self.configure(voice="Zoey")

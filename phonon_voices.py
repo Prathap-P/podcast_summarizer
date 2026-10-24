@@ -17,6 +17,7 @@ _lock = threading.Lock()
 _last_voice: str | None = None
 _unavailable: set[str] = set()
 _catalog_cache: dict[str, str] | None = None
+_warned: set[str] = set()
 
 
 def _ts() -> str:
@@ -57,10 +58,12 @@ def parse_voice_pool(raw: str) -> list[str]:
         if catalog is not None:
             canonical = catalog.get(token.lower())
             if canonical is None:
-                print(
-                    f"[WARNING] [{_ts()}] [PHONON_VOICES] Unknown voice "
-                    f"{token!r} in PHONON_VOICE_POOL - skipping it"
-                )
+                if token.lower() not in _warned:
+                    _warned.add(token.lower())
+                    print(
+                        f"[WARNING] [{_ts()}] [PHONON_VOICES] Unknown voice "
+                        f"{token!r} in PHONON_VOICE_POOL - skipping it"
+                    )
                 continue
             token = canonical
         names.append(token)
@@ -179,4 +182,5 @@ def reset_state() -> None:
     with _lock:
         _last_voice = None
         _unavailable.clear()
+        _warned.clear()
         _catalog_cache = None
