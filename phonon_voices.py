@@ -3,14 +3,15 @@
 Priority, highest first:
 1. PHONON_VOICE_FILE  - a cloned voice file; rotation is off.
 2. PHONON_VOICE       - a single pinned catalog voice; rotation is off.
-3. PHONON_VOICE_POOL  - pick one voice at random per generation, never the
-                        same voice twice in a row.
+3. PHONON_VOICE_POOL  - voices listed in .env; pick one at random per
+                        generation, never the same voice twice in a row.
 4. Nothing configured - the model's own default voice.
 """
 
 import random
 import re
 import threading
+import unicodedata
 from datetime import datetime
 
 _lock = threading.Lock()
@@ -24,15 +25,22 @@ def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def _key(name: str) -> str:
+    """Case- and accent-insensitive lookup key, like Phonon's own lookup."""
+    decomposed = unicodedata.normalize("NFKD", name.strip())
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", stripped).casefold()
+
+
 def _catalog_names() -> dict[str, str] | None:
-    """Map lower-case catalog voice names to their canonical spelling."""
+    """Map normalised catalog voice names to their canonical spelling."""
     global _catalog_cache
     if _catalog_cache is None:
         try:
             import ptts
 
             _catalog_cache = {
-                str(v["name"]).lower(): str(v["name"])
+                _key(str(v["name"])): str(v["name"])
                 for v in ptts.catalog_voices()
                 if v.get("name")
             }
@@ -46,20 +54,26 @@ def _catalog_names() -> dict[str, str] | None:
 
 
 def parse_voice_pool(raw: str) -> list[str]:
-    """Turn 'Zoey, Juniper Harper' into a de-duplicated, validated name list."""
+    """Turn 'Name1, Name2' into a de-duplicated, validated name list.
+
+    Names are separated by commas, semicolons or new lines. Spaces inside a
+    name are kept because some catalog voices are called, for example,
+    "Master Aldric".
+    """
     names: list[str] = []
     seen: set[str] = set()
     catalog = _catalog_names()
-    for token in re.split(r"[,\s;]+", raw or ""):
-        token = token.strip()
-        if not token or token.lower() in seen:
+    for token in re.split(r"[,;\n]+", raw or ""):
+        token = re.sub(r"\s+", " ", token).strip()
+        key = _key(token)
+        if not key or key in seen:
             continue
-        seen.add(token.lower())
+        seen.add(key)
         if catalog is not None:
-            canonical = catalog.get(token.lower())
+            canonical = catalog.get(key)
             if canonical is None:
-                if token.lower() not in _warned:
-                    _warned.add(token.lower())
+                if key not in _warned:
+                    _warned.add(key)
                     print(
                         f"[WARNING] [{_ts()}] [PHONON_VOICES] Unknown voice "
                         f"{token!r} in PHONON_VOICE_POOL - skipping it"
@@ -108,7 +122,11 @@ def describe() -> str:
     names = parse_voice_pool(raw_pool)
     if names:
         return f"Voices rotate randomly: {', '.join(names)}."
-    return "Voice: the model's default voice."
+    return (
+        "Voice: the model's default voice. To rotate between voices, list "
+        "their names in PHONON_VOICE_POOL in the .env file (for example "
+        "PHONON_VOICE_POOL=Name1,Name2) and restart the app."
+    )
 
 
 def pick_voice(

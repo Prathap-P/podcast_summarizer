@@ -42,18 +42,71 @@ class VoiceTestCase(unittest.TestCase):
 
 
 class PoolParsingTests(VoiceTestCase):
-    def test_default_pool_has_the_four_voices(self):
+    def test_no_voice_names_are_hardcoded_in_code(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import importlib
+            import os
+
+            os.environ.pop("PHONON_VOICE_POOL", None)
+            reloaded = importlib.reload(audio_config)
+            try:
+                self.assertEqual(reloaded.PHONON_VOICE_POOL, "")
+            finally:
+                importlib.reload(audio_config)
+
+    def test_a_voice_added_to_the_setting_is_used_without_code_changes(self):
+        catalog = dict(CATALOG, newvoice="NewVoice")
+        patchers = (
+            patch.object(audio_config, "PHONON_VOICE", ""),
+            patch.object(audio_config, "PHONON_VOICE_FILE", ""),
+            patch.object(
+                audio_config, "PHONON_VOICE_POOL", POOL + ",NewVoice"
+            ),
+            patch.object(phonon_voices, "_catalog_names", return_value=catalog),
+        )
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        picks = {phonon_voices.select_voice() for _ in range(80)}
+        self.assertIn("NewVoice", picks)
+        self.assertEqual(len(picks), 5)
+        self.assertIn("NewVoice", phonon_voices.describe())
+
+    def test_empty_pool_tells_the_user_how_to_add_voices(self):
+        self.configure(pool="")
+        self.assertIn("PHONON_VOICE_POOL", phonon_voices.describe())
+        self.assertIn(".env", phonon_voices.describe())
+
+    def test_parse_accepts_commas_semicolons_newlines_and_any_case(self):
+        self.configure()
         self.assertEqual(
-            audio_config.PHONON_VOICE_POOL.split(","),
+            phonon_voices.parse_voice_pool(" zoey, JUNIPER ,harper;\ndelia "),
             ["Zoey", "Juniper", "Harper", "Delia"],
         )
 
-    def test_parse_accepts_commas_spaces_and_any_case(self):
-        self.configure()
-        self.assertEqual(
-            phonon_voices.parse_voice_pool(" zoey, JUNIPER  harper;delia "),
-            ["Zoey", "Juniper", "Harper", "Delia"],
+    def test_voice_names_with_spaces_and_accents_are_supported(self):
+        catalog = dict(
+            CATALOG,
+            **{
+                phonon_voices._key("Master Aldric"): "Master Aldric",
+                phonon_voices._key("Lucía-Sol"): "Lucía-Sol",
+            },
         )
+        with patch.object(phonon_voices, "_catalog_names", return_value=catalog):
+            self.assertEqual(
+                phonon_voices.parse_voice_pool(
+                    "Zoey,  master   aldric , lucia-sol"
+                ),
+                ["Zoey", "Master Aldric", "Lucía-Sol"],
+            )
+
+    def test_two_unknown_words_are_one_unknown_name(self):
+        self.configure()
+        with patch("builtins.print") as printed:
+            names = phonon_voices.parse_voice_pool("Zoey, Typo Voice")
+        self.assertEqual(names, ["Zoey"])
+        warnings = [c for c in printed.call_args_list if "Typo Voice" in str(c)]
+        self.assertEqual(len(warnings), 1)
 
     def test_parse_drops_duplicates_and_unknown_names(self):
         self.configure()

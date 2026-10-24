@@ -61,7 +61,7 @@ Optional settings:
 PHONON_LANG=en
 # PHONON_MODEL_ID=hf://gradium/phonon-31m-en
 # PHONON_VOICE=Zoey
-# PHONON_VOICE_POOL=Zoey,Juniper,Harper,Delia
+PHONON_VOICE_POOL=Zoey,Juniper,Harper,Delia
 # PHONON_VOICE_FILE=voices/myvoice.safetensors
 ```
 
@@ -69,7 +69,7 @@ Leave `PHONON_MODEL_ID` unset to use `ptts`'s pinned default Phonon 31m checkpoi
 
 #### Voice rotation
 
-By default Phonon picks one voice at random for every audio generation, so the output does not sound the same every time. The pool is `PHONON_VOICE_POOL` (default `Zoey,Juniper,Harper,Delia`; separate names with commas, any name from the Phonon voice catalog works, so you can extend it later). A voice is never used twice in a row, and a video keeps the same voice when you retry or resume it.
+By default Phonon picks one voice at random for every audio generation, so the output does not sound the same every time. The voices come from `PHONON_VOICE_POOL` in `.env`, for example `PHONON_VOICE_POOL=Zoey,Juniper,Harper,Delia`. No voice names live in the code, so to add a voice later you only append its name from the Phonon voice catalog to that line and restart the app (separate names with commas; names with spaces such as `Master Aldric` work, matching ignores case and accents, and unknown names are skipped with a warning). If the pool is empty the model's default voice is used. A voice is never used twice in a row, and a video keeps the same voice when you retry or resume it.
 
 The voice is chosen in this order:
 
